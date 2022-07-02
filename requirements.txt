@@ -5,7 +5,9 @@ matplotlib
 pillow
 pytorch
 torchvision
+torch-summary
 tqdm
+wandb
 
 black
 isort
