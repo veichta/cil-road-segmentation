@@ -1,0 +1,12 @@
+python=3.8.5
+numpy
+pandas
+matplotlib
+pillow
+pytorch
+torchvision
+tqdm
+
+black
+isort
+flake8
