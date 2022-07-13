@@ -7,7 +7,8 @@ import pandas as pd
 import torch
 from PIL import Image
 from torch import nn
-from torchsummary import summary
+
+# from torchsummary import summary
 from tqdm import tqdm
 
 from models.base_unet import accuracy_fn, patch_accuracy_fn
@@ -48,12 +49,11 @@ def main(args):
 
     logging.info(vars(args))
 
-    train_df, val_df = load_data_info_with_split(args)
-
     if args.model == "unet":
         from datasets.base_dataset import BaseDataset
         from models.base_unet import UNet, evaluate_model, train_one_epoch
 
+        train_df, val_df = load_data_info_with_split(args)
         # create train and val datasets
         train_dataset = BaseDataset(
             dataframe=train_df, use_patches=False, target_size=(384, 384), args=args
@@ -78,7 +78,7 @@ def main(args):
 
         # create model
         model = UNet().to(args.device)
-        summary(model, input_size=(args.batch_size, 384, 384))
+        # summary(model, input_size=(args.batch_size, 384, 384))
 
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -86,30 +86,84 @@ def main(args):
     elif args.model == "spin":
         from models.hourglas_spin import HourglassNet, evaluate_model, train_one_epoch
 
-        # from datasets ...
+        model = HourglassNet().to(args.device)
+
+        # datasets TODO: MD dataset
+        import json
+
+        from datasets import road_dataset
         from utils.loss import CrossEntropyLoss2d, mIoULoss
 
-        criterion = [mIoULoss(torch.ones(2), 2), CrossEntropyLoss2d(torch.ones(37))]
+        # criterion = [mIoULoss(torch.ones(2), 2), CrossEntropyLoss2d(torch.ones(37))]
+
+        data_class = {"cil": road_dataset.CILDataset, "deepglobe": road_dataset.DeepGlobeDataset, "md": None}
+        config = json.load(open(args.config))
+
+        train_loader = torch.utils.data.DataLoader(
+            data_class[args.dataset](
+                config["train_dataset"],
+                seed=config["seed"],
+                is_train=True,
+                multi_scale_pred=args.multi_scale_pred,
+            ),
+            batch_size=config["train_batch_size"],
+            num_workers=args.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+        val_loader = torch.utils.data.DataLoader(
+            data_class[args.dataset](
+                config["val_dataset"],
+                seed=config["seed"],
+                is_train=False,
+                multi_scale_pred=args.multi_scale_pred,
+            ),
+            batch_size=config["val_batch_size"],
+            num_workers=args.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+        optimizer = torch.optim.SGD(
+            model.parameters(), lr=config["optimizer"]["lr"], momentum=0.9, weight_decay=0.0005
+        )
+
+        from utils.utils import weights_init
+        weights_init(model, args.seed)
+
+        weights_angles = torch.ones(config["task2_classes"]).to(args.device)
+        weights = torch.ones(config["task1_classes"]).to(args.device)
+        angle_loss = CrossEntropyLoss2d(
+            weight=weights_angles, size_average=True, ignore_index=255, reduce=True
+        ).to(args.device)
+        road_loss = mIoULoss(
+            weight=weights, n_classes=config["task1_classes"]
+        ).to(args.device)
+
+        loss_fn = [road_loss, angle_loss]
 
         # init dataloader, model, optimizer and metrics
+
 
     metric_fns = {"acc": accuracy_fn, "patch_acc": patch_accuracy_fn}
 
     history = {}
     for epoch in range(args.num_epochs):
-        metrics = train_one_epoch(
+        ms = train_one_epoch(
             train_loader=train_loader,
             model=model,
-            loss_fn=loss_fn,
+            criterion=loss_fn,
             optimizer=optimizer,
             metric_fns=metric_fns,
             epoch=epoch,
             args=args,
         )
+        #FIXME: for spin
         history = evaluate_model(
             val_loader=val_loader,
             model=model,
-            loss_fn=loss_fn,
+            criterion=loss_fn,
             metric_fns=metric_fns,
             history=history,
             epoch=epoch,

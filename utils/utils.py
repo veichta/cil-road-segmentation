@@ -1,7 +1,10 @@
 import argparse
+import math
+import random
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from PIL import Image
 
 
@@ -22,6 +25,16 @@ def parse_arguments():
     parser.add_argument(
         "--backbone",
         type=str, help="Backbone name"
+    )
+    #Training data
+    parser.add_argument(
+        "--dataset", 
+        type=str, default="cil", help="Dataset used for training."
+    )
+
+    parser.add_argument(
+        "--config", 
+        type=str, default="./config.json", help="Path to config file."
     )
 
     # Training setup
@@ -88,9 +101,24 @@ def parse_arguments():
         "--log_dir", 
         type=str, default="./logs", help="Directory to save logs"
     )
+    parser.add_argument(
+        "--multi_scale_pred",
+        default=True,
+        type=str2bool,
+        help="perform multi-scale prediction (default: True)",
+    )
     # fmt: on
     return parser.parse_args()
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    elif v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected.")
 
 def apply_mask(img, mask):
     """Apply mask to image.
@@ -133,3 +161,16 @@ def show_image_segmentation(img, mask, title):
 
     plt.suptitle(title)
     plt.savefig(f"checkpoints/{title}.png")
+
+def weights_init(model, manual_seed=7):
+    np.random.seed(manual_seed)
+    torch.manual_seed(manual_seed)
+    random.seed(manual_seed)
+    torch.cuda.manual_seed_all(manual_seed)
+    for m in model.modules():
+        if isinstance(m, torch.nn.Conv2d) or isinstance(m, torch.nn.ConvTranspose2d):
+            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            m.weight.data.normal_(0, math.sqrt(2.0 / n))
+        elif isinstance(m, torch.nn.BatchNorm2d):
+            m.weight.data.fill_(1)
+            m.bias.data.zero_()

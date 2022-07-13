@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from numpy import dtype
 from torch.autograd import Variable
 
 
@@ -18,7 +19,7 @@ def to_one_hot_var(tensor, nClasses, requires_grad=False):
 
     n, h, w = tensor.size()
     one_hot = tensor.new(n, nClasses, h, w).fill_(0)
-    one_hot = one_hot.scatter_(1, tensor.view(n, 1, h, w), 1)
+    one_hot = one_hot.scatter_(1, tensor.view(n, 1, h, w).to(dtype=torch.int64), 1)
     return Variable(one_hot, requires_grad=requires_grad)
 
 

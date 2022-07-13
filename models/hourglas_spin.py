@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from models.spin import spin
 
@@ -329,9 +330,63 @@ class HourglassNet(nn.Module):
         return out_1, out_2
 
 
-def train_one_epoch(train_loader, model, criterion, optimizer, metrics, epoch, args):
-    pass
+def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch, args):
+    metrics = {"loss": [], "val_loss": []}
+    for k in list(metrics):
+        metrics[k] = []
+        metrics["val_" + k] = []
+    
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.num_epochs}")
+    pbar.set_postfix({k: 0 for k in metrics})
 
+    model.train()
+    for (inputsBGR, labels, vecmap_angles) in pbar:
+        inputsBGR = inputsBGR.to(args.device)
+        for l in labels:
+            l = l.to(args.device)
+        for angle in vecmap_angles:
+            angle = angle.to(args.device)
+        train_step(model, criterion, optimizer, metric_fns, metrics, inputsBGR, labels, vecmap_angles,
+         args)
+
+        pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
+
+    return metrics
+    
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args):
+    optimizer.zero_grad()
+    outputs, pred_vecmaps = model(x.float())
+
+    if args.multi_scale_pred:
+        loss1 = loss_fn[0](outputs[0], y[0], False)
+        #TODO: handle multiple GPUs
+        # num_stacks = model.module.num_stacks if num_gpus > 1 else model.num_stacks
+        num_stacks = model.num_stacks
+        for idx in range(num_stacks - 1):
+            loss1 += loss_fn[0](outputs[idx + 1], y[0], False)
+        for idx, output in enumerate(outputs[-2:]):
+            loss1 += loss_fn[0](output, y[idx + 1], False)
+
+        loss2 = loss_fn[1](pred_vecmaps[0], y_vec[0])
+        for idx in range(num_stacks - 1):
+            loss2 += loss_fn[1](
+                pred_vecmaps[idx + 1], y_vec[0])
+        for idx, pred_vecmap in enumerate(pred_vecmaps[-2:]):
+            loss2 += loss_fn[1](pred_vecmap, y_vec[idx + 1])
+
+        outputs = outputs[-1]
+        pred_vecmaps = pred_vecmaps[-1]
+    else:
+        loss1 = loss_fn[0](outputs, y[-1], False)
+        loss2 = loss_fn[1](pred_vecmaps, y_vec[-1])
+
+    loss = loss1 + loss2
+    loss.backward()
+    optimizer.step()
+    metrics["loss"].append(loss.item())
+    #FIXME: fix metrics
+    # for k, fn in metric_fns.items():
+    #     metrics[k].append(fn(outputs[-1], y).item())
 
 def evaluate_model(val_loader, model, loss_fn, metric_fns, history, epoch, metrics, args):
     pass
