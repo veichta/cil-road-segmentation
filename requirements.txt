@@ -8,6 +8,8 @@ torchvision
 torch-summary
 tqdm
 wandb
+scikit-image
+numba
 
 black
 isort

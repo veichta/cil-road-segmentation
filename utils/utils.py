@@ -35,7 +35,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--lr", 
-        type=float, default=0.001, help="Learning rate"
+        type=float, default=1e-2, help="Learning rate"
     )
     parser.add_argument(
         "--batch_size", 
@@ -44,6 +44,10 @@ def parse_arguments():
     parser.add_argument(
         "--weight_decay", 
         type=float, default=0, help="Weight decay"
+    )
+    parser.add_argument(
+        "--grad_clip",
+        type=float, default=0.1, help="Gradient clipping"
     )
     parser.add_argument(
         "--dropout", 

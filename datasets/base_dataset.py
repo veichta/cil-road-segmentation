@@ -49,6 +49,8 @@ class BaseDataset(torch.utils.data.Dataset):
 
         img = np.array(img) / 255
         mask = np.array(mask)
+        mask[mask > 0] = 1
+        
         if len(mask.shape) > 2:
             mask = mask[:, :, 0]
 
@@ -58,7 +60,7 @@ class BaseDataset(torch.utils.data.Dataset):
             mask = torch.tensor(mask, dtype=torch.float32)
             img = img.permute(0, 3, 1, 2)
 
-            return img.to(self.device), mask.to(self.device)
+            return img, mask
 
         img = torch.tensor(img, dtype=torch.float32).permute(2, 0, 1)
         mask = torch.tensor(mask, dtype=torch.float32)

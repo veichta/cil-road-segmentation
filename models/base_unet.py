@@ -1,5 +1,8 @@
 import torch
+from PIL import Image
 from torch import nn
+from tqdm import tqdm
+from utils.utils import show_image_segmentation
 
 PATCH_SIZE = 16  # pixels per side of square patches
 VAL_SIZE = 10  # size of the validation set (number of images)
@@ -75,3 +78,82 @@ def patch_accuracy_fn(y_hat, y):
 def accuracy_fn(y_hat, y):
     # computes classification accuracy
     return (y_hat.round() == y.round()).float().mean()
+
+
+def train_one_epoch(train_loader, model, criterion, optimizer, metrics, epoch, args):
+    metrics = {"loss": [], "val_loss": []}
+    for k in metrics:
+        metrics[k] = []
+        metrics["val_" + k] = []
+
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.num_epochs}")
+    pbar.set_postfix({k: 0 for k in metrics})
+
+    model.train()
+    for (x, y) in pbar:
+        x = x.to(args.device)
+        y = y.to(args.device)
+
+        train_step(model, criterion, optimizer, metrics, metrics, x, y, args)
+
+        pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
+
+    return metrics
+
+
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, args):
+
+    optimizer.zero_grad()  # zero out gradients
+    y_hat = model(x)  # forward pass
+
+    loss = loss_fn(y, y_hat)  # compute loss
+    loss.backward()  # backward pass
+
+    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+    optimizer.step()  # optimize weights
+
+    # log partial metrics
+    metrics["loss"].append(loss.item())
+    for k, fn in metric_fns.items():
+        metrics[k].append(fn(y_hat, y).item())
+
+
+def evaluate_model(val_loader, model, loss_fn, metric_fns, history, epoch, metrics, args):
+    model.eval()
+    with torch.no_grad():  # do not keep track of gradients
+        show = True
+        for (x, y) in tqdm(val_loader):
+            x = x.to(args.device)
+            y = y.to(args.device)
+
+            y_hat = model(x)  # forward pass
+
+            loss = loss_fn(y, y_hat)
+
+            if show:
+                print_predictions(epoch, x, y, y_hat)
+                show = False
+
+                # log partial metrics
+            metrics["val_loss"].append(loss.item())
+            for k, fn in metric_fns.items():
+                metrics["val_" + k].append(fn(y_hat, y).item())
+
+        # summarize metrics, log to tensorboard and display
+    history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
+    print(" ".join([f"- {str(k)} = {str(v)}" + "\n " for (k, v) in history[epoch].items()]))
+    return history
+
+
+def print_predictions(epoch, x, y, y_hat):
+    idx = 1
+    img = (x[idx] * 255).cpu().permute(1, 2, 0).to(torch.uint8).numpy()
+    mask = (y[idx] * 255).cpu().to(torch.uint8).numpy()
+
+    img = Image.fromarray(img)
+    mask = Image.fromarray(mask)
+    show_image_segmentation(img, mask, f"Ground Truth - Epoch {epoch+1}")
+
+    pred_mask = (y_hat[idx] * 255).to(torch.uint8).cpu().numpy()
+    pred_mask = Image.fromarray(pred_mask)
+    show_image_segmentation(img, pred_mask, f"Prediction - Epoch {epoch+1}")
