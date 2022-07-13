@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
+from utils.evaluate_utils import print_predictions
 from zmq import device
 
 from models.spin import spin
@@ -386,4 +387,50 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args
         metrics[k].append(fn(outputs.argmax(dim=1).float(), y[-1].to(device=args.device)).item())
 
 def evaluate_model(val_loader, model, loss_fn, metric_fns, history, epoch, metrics, args):
-    pass
+    model.eval()
+    with torch.no_grad():  # do not keep track of gradients
+        show = True
+        for (inputsBGR, y, y_vec) in tqdm(val_loader):
+            inputsBGR = inputsBGR.to(device=args.device)
+            outputs, pred_vecmaps = model(inputsBGR.float())  # forward pass
+            
+            if args.multi_scale_pred:
+                loss1 = loss_fn[0](outputs[0], y[0].to(args.device), False)
+                #TODO: handle multiple GPUs
+                # num_stacks = model.module.num_stacks if num_gpus > 1 else model.num_stacks
+                num_stacks = model.num_stacks
+                for idx in range(num_stacks - 1):
+                    loss1 += loss_fn[0](outputs[idx + 1], y[0].to(args.device), False)
+                for idx, output in enumerate(outputs[-2:]):
+                    loss1 += loss_fn[0](output, y[idx + 1].to(args.device), False)
+
+                loss2 = loss_fn[1](pred_vecmaps[0], y_vec[0].to(args.device))
+                for idx in range(num_stacks - 1):
+                    loss2 += loss_fn[1](
+                        pred_vecmaps[idx + 1], y_vec[0].to(args.device))
+                for idx, pred_vecmap in enumerate(pred_vecmaps[-2:]):
+                    loss2 += loss_fn[1](pred_vecmap, y_vec[idx + 1].to(args.device))
+
+                outputs = outputs[-1]
+                pred_vecmaps = pred_vecmaps[-1]
+            else:
+                loss1 = loss_fn[0](outputs, y[-1].to(args.device), False)
+                loss2 = loss_fn[1](pred_vecmaps, y_vec[-1].to(args.device))
+
+            if show:
+                print(inputsBGR.shape)
+                print(y[-1].shape)
+                print(outputs.argmax(1).view(y[-1].shape).shape)
+                print_predictions(epoch, inputsBGR, y[-1].float(), outputs.argmax(1).view(y[-1].shape).float())
+                show = False
+            
+            loss = loss1 + loss2
+                # log partial metrics
+            metrics["val_loss"].append(loss.item())
+            for k, fn in metric_fns.items():
+                metrics["val_" + k].append(fn(outputs.argmax(dim=1).float(), y[-1].to(device=args.device)).item())
+
+        # summarize metrics, log to tensorboard and display
+    history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
+    print(" ".join([f"- {str(k)} = {str(v)}" + "\n " for (k, v) in history[epoch].items()]))
+    return history

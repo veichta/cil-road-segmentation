@@ -217,8 +217,8 @@ class RoadDataset(data.Dataset):
         w, h, _ = image.shape
         crop_h, crop_w = size
 
-        start_x = np.random.randint(0, w - crop_w)
-        start_y = np.random.randint(0, h - crop_h)
+        start_x = np.random.randint(0, w - crop_w) if w-crop_w > 0 else 0
+        start_y = np.random.randint(0, h - crop_h) if h-crop_h > 0 else 0
 
         image = image[start_x : start_x + crop_w, start_y : start_y + crop_h, :]
         gt = gt[start_x : start_x + crop_w, start_y : start_y + crop_h]

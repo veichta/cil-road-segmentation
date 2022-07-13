@@ -164,11 +164,12 @@ def main(args):
         history = evaluate_model(
             val_loader=val_loader,
             model=model,
-            criterion=loss_fn,
+            loss_fn=loss_fn,
             metric_fns=metric_fns,
             history=history,
             epoch=epoch,
             metrics=metrics,
+            args=args
         )
 
 

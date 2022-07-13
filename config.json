@@ -27,9 +27,9 @@
             "file": "./data/CIL/train_crops.txt",
             "image_suffix": ".png",
             "gt_suffix": ".png",
-            "crop_size": 128
+            "crop_size": 400
         },
-        "crop_size": 128,
+        "crop_size": 400,
         "augmentation": true,
         "mean" : "[70.95016901, 71.16398124, 71.30953645]",
         "std" : "[ 34.00087859, 35.18201658, 36.40463264]",
@@ -58,9 +58,9 @@
             "file": "./data/CIL/val_crops.txt",
             "image_suffix": ".png",
             "gt_suffix": ".png",
-            "crop_size": 128
+            "crop_size": 400
         },
-        "crop_size": 128,
+        "crop_size": 400,
         "augmentation": false,
         "mean" : "[70.95016901, 71.16398124, 71.30953645]",
         "std" : "[ 34.00087859, 35.18201658, 36.40463264]",
