@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from numpy import dtype
 from torch.autograd import Variable
+from zmq import device
 
 
 class CrossEntropyLoss2d(nn.Module):
@@ -40,10 +41,9 @@ class mIoULoss(nn.Module):
         else:
             target_oneHot = to_one_hot_var(target, self.classes).float()
 
-        # predicted probabilities for each pixel along channel
         inputs = F.softmax(inputs, dim=1)
-
         # Numerator Product
+
         inter = inputs * target_oneHot
         ## Sum over all pixels N x C x H x W => N x C
         inter = inter.view(N, self.classes, -1).sum(2)
