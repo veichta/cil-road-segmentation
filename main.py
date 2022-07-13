@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
+from sklearn import metrics
 from torch import nn
 
 # from torchsummary import summary
@@ -150,7 +151,7 @@ def main(args):
 
     history = {}
     for epoch in range(args.num_epochs):
-        ms = train_one_epoch(
+        metrics = train_one_epoch(
             train_loader=train_loader,
             model=model,
             criterion=loss_fn,
