@@ -418,9 +418,6 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, history, epoch, metri
                 loss2 = loss_fn[1](pred_vecmaps, y_vec[-1].to(args.device))
 
             if show:
-                print(inputsBGR.shape)
-                print(y[-1].shape)
-                print(outputs.argmax(1).view(y[-1].shape).shape)
                 print_predictions(epoch, inputsBGR, y[-1].float(), outputs.argmax(1).view(y[-1].shape).float())
                 show = False
             
