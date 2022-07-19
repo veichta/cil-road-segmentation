@@ -2,7 +2,6 @@ import torch
 from PIL import Image
 from torch import nn
 from tqdm import tqdm
-from utils.utils import show_image_segmentation
 
 PATCH_SIZE = 16  # pixels per side of square patches
 VAL_SIZE = 10  # size of the validation set (number of images)
@@ -118,10 +117,9 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, args):
         metrics[k].append(fn(y_hat, y).item())
 
 
-def evaluate_model(val_loader, model, loss_fn, metric_fns, history, epoch, metrics, args):
+def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args):
     model.eval()
     with torch.no_grad():  # do not keep track of gradients
-        show = True
         for (x, y) in tqdm(val_loader):
             x = x.to(args.device)
             y = y.to(args.device)
@@ -130,30 +128,10 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, history, epoch, metri
 
             loss = loss_fn(y, y_hat)
 
-            if show:
-                print_predictions(epoch, x, y, y_hat)
-                show = False
-
-                # log partial metrics
+            # log partial metrics
             metrics["val_loss"].append(loss.item())
             for k, fn in metric_fns.items():
-                metrics["val_" + k].append(fn(y_hat, y).item())
+                metrics[f"val_{k}"].append(fn(y_hat, y).item())
 
-        # summarize metrics, log to tensorboard and display
-    history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
-    print(" ".join([f"- {str(k)} = {str(v)}" + "\n " for (k, v) in history[epoch].items()]))
-    return history
-
-
-def print_predictions(epoch, x, y, y_hat):
-    idx = 1
-    img = (x[idx] * 255).cpu().permute(1, 2, 0).to(torch.uint8).numpy()
-    mask = (y[idx] * 255).cpu().to(torch.uint8).numpy()
-
-    img = Image.fromarray(img)
-    mask = Image.fromarray(mask)
-    show_image_segmentation(img, mask, f"Ground Truth - Epoch {epoch+1}")
-
-    pred_mask = (y_hat[idx] * 255).to(torch.uint8).cpu().numpy()
-    pred_mask = Image.fromarray(pred_mask)
-    show_image_segmentation(img, pred_mask, f"Prediction - Epoch {epoch+1}")
+            # summarize metrics, log to tensorboard and display
+    return metrics

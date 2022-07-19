@@ -66,6 +66,14 @@ def parse_arguments():
         "--dropout", 
         type=float, default=0, help="Dropout"    
     )
+    parser.add_argument(
+        "--weight_miou", 
+        type=float, default=1, help="Dropout"
+    )
+    parser.add_argument(
+        "--weight_vec", 
+        type=float, default=1, help="Dropout"
+    )
 
     # Dataset setup
     parser.add_argument(
@@ -110,6 +118,7 @@ def parse_arguments():
     # fmt: on
     return parser.parse_args()
 
+
 def str2bool(v):
     if isinstance(v, bool):
         return v
@@ -120,47 +129,6 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
-def apply_mask(img, mask):
-    """Apply mask to image.
-
-    Args:
-        img: Image to apply mask to.
-        mask: Mask to apply.
-
-    Returns:
-        PIL.Image: Image with mask applied.
-    """
-    img = np.array(img)
-    mask = np.array(mask)
-
-    img[mask > 255 * 0.5] = 255
-    return Image.fromarray(img)
-
-
-def show_image_segmentation(img, mask, title):
-    """Show image and mask.
-
-    Args:
-        img: Image to show.
-        mask: Mask to show.
-        title: Title of image.
-    """
-    seg = apply_mask(img, mask)
-    fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-    ax[0].imshow(img)
-    ax[0].set_title("Image")
-    ax[0].axis("off")
-
-    ax[1].imshow(mask, cmap="gray")
-    ax[1].set_title("Mask")
-    ax[1].axis("off")
-
-    ax[2].imshow(seg)
-    ax[2].set_title("Segmentation applied to image")
-    ax[2].axis("off")
-
-    plt.suptitle(title)
-    plt.savefig(f"checkpoints/{title}.png")
 
 def weights_init(model, manual_seed=7):
     np.random.seed(manual_seed)
