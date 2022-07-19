@@ -1,15 +1,14 @@
-from __future__ import print_function
-
+import logging
 import math
+import os
 
-import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from PIL import Image
 from tqdm import tqdm
-from utils.evaluate_utils import print_predictions
-from zmq import device
+from utils.evaluate_utils import plot_predictions
 
 from models.spin import spin
 
@@ -332,102 +331,168 @@ class HourglassNet(nn.Module):
         return out_1, out_2
 
 
+def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, args):
+    miou = loss_fn[0]
+    ce = loss_fn[1]
+
+    if not args.multi_scale_pred:
+        loss1 = miou(pred_mask, label.to(args.device))
+        loss2 = ce(pred_vec, vecmap_angles.to(args.device))
+        loss = args.miou_weight * loss1 + args.ce_weight * loss2
+        return loss, loss1, loss2
+
+    loss1 = miou(pred_mask[0], label[0].to(args.device), False)
+    for idx in range(num_stacks - 1):
+        loss1 += miou(pred_mask[idx + 1], label[0].to(args.device), False)
+
+    for idx, output in enumerate(pred_mask[-2:]):
+        loss1 += miou(output, label[idx + 1].to(args.device), False)
+
+    loss2 = ce(pred_vec[0], vecmap_angles[0].to(args.device))
+    for idx in range(num_stacks - 1):
+        loss2 += ce(pred_vec[idx + 1], vecmap_angles[0].to(args.device))
+    for idx, pred_vecmap in enumerate(pred_vec[-2:]):
+        loss2 += ce(pred_vecmap, vecmap_angles[idx + 1].to(args.device))
+
+    loss = args.weight_miou * loss1 + args.weight_vec * loss2
+    return loss, loss1, loss2
+
+
 def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch, args):
-    metrics = {"loss": [], "val_loss": []}
+    metrics = {
+        "loss": [],
+        "val_loss": [],
+        "road_loss": [],
+        "val_road_loss": [],
+        "angle_loss": [],
+        "val_angle_loss": [],
+    }
     for k in list(metric_fns):
         metrics[k] = []
-        metrics["val_" + k] = []
-    
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.num_epochs}")
-    pbar.set_postfix({k: 0 for k in metrics})
+        metrics[f"val_{k}"] = []
+
+    # pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.num_epochs}")
+    # pbar.set_postfix({k: 0 for k in metrics})
 
     model.train()
-    for (inputsBGR, labels, vecmap_angles) in pbar:
-        inputsBGR = inputsBGR.to(args.device)
-        train_step(model, criterion, optimizer, metric_fns, metrics, inputsBGR, labels, vecmap_angles,
-         args)
+    for (inputsBGR, labels, vecmap_angles) in tqdm(train_loader):
+        # if len(metrics["loss"]) > 0:
+        #     continue
 
-        pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
+        inputsBGR = inputsBGR.to(args.device)
+        metrics, road_loss, angle_loss = train_step(
+            model, criterion, optimizer, metric_fns, metrics, inputsBGR, labels, vecmap_angles, args
+        )
+        metrics["road_loss"].append(road_loss)
+        metrics["angle_loss"].append(angle_loss)
+
+        # pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
+
+    logging.info(f"\tTrain Loss: {sum(metrics['loss']) / len(metrics['loss']):.4f}")
+    logging.info(f"\tTrain Road Loss: {sum(metrics['road_loss']) / len(metrics['road_loss']):.4f}")
+    logging.info(
+        f"\tTrain Angle Loss: {sum(metrics['angle_loss']) / len(metrics['angle_loss']):.4f}"
+    )
+    for k in list(metric_fns):
+        logging.info(f"\tTrain {k}: {sum(metrics[k]) / len(metrics[k]):.4f}")
 
     return metrics
-    
+
+
 def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args):
     optimizer.zero_grad()
-    outputs, pred_vecmaps = model(x.float())
 
-    if args.multi_scale_pred:
-        loss1 = loss_fn[0](outputs[0], y[0].to(args.device), False)
-        #TODO: handle multiple GPUs
-        # num_stacks = model.module.num_stacks if num_gpus > 1 else model.num_stacks
-        num_stacks = model.num_stacks
-        for idx in range(num_stacks - 1):
-            loss1 += loss_fn[0](outputs[idx + 1], y[0].to(args.device), False)
-        for idx, output in enumerate(outputs[-2:]):
-            loss1 += loss_fn[0](output, y[idx + 1].to(args.device), False)
+    pred_mask, pred_vec = model(x)
 
-        loss2 = loss_fn[1](pred_vecmaps[0], y_vec[0].to(args.device))
-        for idx in range(num_stacks - 1):
-            loss2 += loss_fn[1](
-                pred_vecmaps[idx + 1], y_vec[0].to(args.device))
-        for idx, pred_vecmap in enumerate(pred_vecmaps[-2:]):
-            loss2 += loss_fn[1](pred_vecmap, y_vec[idx + 1].to(args.device))
+    loss, road_loss, angle_loss = criterion(
+        num_stacks=model.num_stacks,
+        loss_fn=loss_fn,
+        pred_mask=pred_mask,
+        pred_vec=pred_vec,
+        label=y,
+        vecmap_angles=y_vec,
+        args=args,
+    )
 
-        outputs = outputs[-1]
-        pred_vecmaps = pred_vecmaps[-1]
-    else:
-        loss1 = loss_fn[0](outputs, y[-1].to(args.device), False)
-        loss2 = loss_fn[1](pred_vecmaps, y_vec[-1].to(args.device))
-
-    loss = loss1 + loss2
     loss.backward()
     optimizer.step()
-    metrics["loss"].append(loss.item())
-    #FIXME: fix metrics
-    for k, fn in metric_fns.items():
-        metrics[k].append(fn(outputs.argmax(dim=1).float(), y[-1].to(device=args.device)).item())
 
-def evaluate_model(val_loader, model, loss_fn, metric_fns, history, epoch, metrics, args):
+    metrics["loss"].append(loss.item())
+    # FIXME: fix metrics
+    if args.multi_scale_pred:
+        pred_mask = pred_mask[-1]
+        y = y[-1]
+
+    for k, fn in metric_fns.items():
+        metrics[k].append(fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device)).item())
+
+    return metrics, road_loss, angle_loss
+
+
+def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args):
     model.eval()
     with torch.no_grad():  # do not keep track of gradients
         show = True
         for (inputsBGR, y, y_vec) in tqdm(val_loader):
             inputsBGR = inputsBGR.to(device=args.device)
-            outputs, pred_vecmaps = model(inputsBGR.float())  # forward pass
-            
+            pred_mask, pred_vec = model(inputsBGR)  # forward pass
+
+            loss, road_loss, angle_loss = criterion(
+                num_stacks=model.num_stacks,
+                loss_fn=loss_fn,
+                pred_mask=pred_mask,
+                pred_vec=pred_vec,
+                label=y,
+                vecmap_angles=y_vec,
+                args=args,
+            )
+
             if args.multi_scale_pred:
-                loss1 = loss_fn[0](outputs[0], y[0].to(args.device), False)
-                #TODO: handle multiple GPUs
-                # num_stacks = model.module.num_stacks if num_gpus > 1 else model.num_stacks
-                num_stacks = model.num_stacks
-                for idx in range(num_stacks - 1):
-                    loss1 += loss_fn[0](outputs[idx + 1], y[0].to(args.device), False)
-                for idx, output in enumerate(outputs[-2:]):
-                    loss1 += loss_fn[0](output, y[idx + 1].to(args.device), False)
-
-                loss2 = loss_fn[1](pred_vecmaps[0], y_vec[0].to(args.device))
-                for idx in range(num_stacks - 1):
-                    loss2 += loss_fn[1](
-                        pred_vecmaps[idx + 1], y_vec[0].to(args.device))
-                for idx, pred_vecmap in enumerate(pred_vecmaps[-2:]):
-                    loss2 += loss_fn[1](pred_vecmap, y_vec[idx + 1].to(args.device))
-
-                outputs = outputs[-1]
-                pred_vecmaps = pred_vecmaps[-1]
-            else:
-                loss1 = loss_fn[0](outputs, y[-1].to(args.device), False)
-                loss2 = loss_fn[1](pred_vecmaps, y_vec[-1].to(args.device))
+                pred_mask = pred_mask[-1]
+                pred_vec = pred_vec[-1]
+                y = y[-1]
 
             if show:
-                print_predictions(epoch, inputsBGR, y[-1].float(), outputs.argmax(1).view(y[-1].shape).float())
-                show = False
-            
-            loss = loss1 + loss2
-                # log partial metrics
-            metrics["val_loss"].append(loss.item())
-            for k, fn in metric_fns.items():
-                metrics["val_" + k].append(fn(outputs.argmax(dim=1).float(), y[-1].to(device=args.device)).item())
+                n = 4
+                images = [img.permute(1, 2, 0).numpy()[:, :, ::-1] for img in inputsBGR]
+                images = [(img * 255).astype(np.uint8) for img in images]
+                images = [Image.fromarray(img) for img in images]
 
-        # summarize metrics, log to tensorboard and display
-    history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
-    print(" ".join([f"- {str(k)} = {str(v)}" + "\n " for (k, v) in history[epoch].items()]))
-    return history
+                masks = [mask.numpy() for mask in y]
+                masks = [(mask * 255).astype(np.uint8) for mask in masks]
+                masks = [Image.fromarray(mask).convert("L") for mask in masks]
+
+                pred_masks = [mask.argmax(dim=0).numpy() for mask in pred_mask]
+                pred_masks = [(mask * 255).astype(np.uint8) for mask in pred_masks]
+                pred_masks = [Image.fromarray(mask).convert("L") for mask in pred_masks]
+
+                plot_predictions(
+                    images[:n],
+                    masks[:n],
+                    pred_masks[:n],
+                    os.path.join("./checkpoints", f"predictions_{epoch + 1 }.pdf"),
+                    epoch,
+                )
+                show = False
+
+            metrics["val_loss"].append(loss.item())
+            metrics["val_road_loss"].append(road_loss)
+            metrics["val_angle_loss"].append(angle_loss)
+
+            for k, fn in metric_fns.items():
+                metrics[f"val_{k}"].append(
+                    fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device)).item()
+                )
+
+            # summarize metrics, log to tensorboard and display
+    logging.info(f"\tValidation Loss: {sum(metrics['val_loss']) / len(metrics['val_loss']):.4f}")
+    logging.info(
+        f"\tValidation Road Loss: {sum(metrics['val_road_loss']) / len(metrics['val_road_loss']):.4f}"
+    )
+    logging.info(
+        f"\tValidation Angle Loss: {sum(metrics['val_angle_loss']) / len(metrics['val_angle_loss']):.4f}"
+    )
+    for k in list(metric_fns):
+        logging.info(f'\tValidation {k}: {sum(metrics[f"val_{k}"]) / len(metrics[f"val_{k}"]):.4f}')
+
+    return metrics
