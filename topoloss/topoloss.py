@@ -1,3 +1,12 @@
+# Tips to incorporate the topological loss into your own framework
+# You have to pretrain your model first and then fine-tune with topoloss, see the rationale part of our paper
+# train(pretrain_epoch, topo_epoch):
+#    for i in range(0, topo_epoch):
+#       if (i<= pretrain_epoch):
+#         loss = nn.CrossEntropyLoss();
+#       else:
+#         loss = nn.CrossEntropyLoss() + lambda * getTopoLoss(lh, gt);
+
 import time
 import numpy
 import gudhi as gd
