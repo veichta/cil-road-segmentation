@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import torch
 from torch import nn
-from torchsummary import summary
+# from torchsummary import summary
 
-from models.base_unet import accuracy_fn, patch_accuracy_fn
+from models.base_unet import accuracy_fn, patch_accuracy_fn, f1_fn, patch_F1_fn
 from utils.utils import parse_arguments
 
 
@@ -26,6 +26,11 @@ def load_data_info_with_split(args):
     dataset_info = pd.read_csv(os.path.join(args.data_path, "dataset.csv"))
 
     cil_data_info = dataset_info[dataset_info["dataset"] == "CIL"]
+    
+    if args.inference:
+        return cil_data_info[cil_data_info["split"] == "test"]
+    else:
+        cil_data_info = cil_data_info[cil_data_info["split"] != "test"]
     # set splits for CIL dataset
     for idx, row in cil_data_info.iterrows():
         if np.random.rand() <= args.val_split:
@@ -66,7 +71,7 @@ def main(args):
 
         # create model
         model = UNet().to(args.device)
-        summary(model, input_size=(args.batch_size, 384, 384))
+        # summary(model, input_size=(args.batch_size, 384, 384))
 
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -82,7 +87,7 @@ def main(args):
 
         model = HourglassNet().to(args.device)
         weights_init(model, args.seed)
-        summary(model, input_size=(3, target_size[0], target_size[1]))
+        # summary(model, input_size=(3, target_size[0], target_size[1]))
 
         train_dataset = road_dataset.RoadDataset(
             dataframe=train_df,
@@ -124,7 +129,7 @@ def main(args):
         num_workers=args.num_workers,
     )
 
-    metric_fns = {"acc": accuracy_fn, "patch_acc": patch_accuracy_fn}
+    metric_fns = {"acc": accuracy_fn, "patch_acc": patch_accuracy_fn, "f1": f1_fn, "patch_f1": patch_F1_fn}
 
     history = {}
     for epoch in range(args.num_epochs):
@@ -139,7 +144,7 @@ def main(args):
             epoch=epoch,
             args=args,
         )
-        # FIXME: for spin
+
         metrics = evaluate_model(
             val_loader=val_loader,
             model=model,
@@ -175,6 +180,7 @@ def main(args):
 
     total_end = timer()
     logging.info(f"Total time: {timedelta(seconds=total_end - total_start)}")
+    torch.save(model.state_dict(), args.model_name)
 
 
 if __name__ == "__main__":

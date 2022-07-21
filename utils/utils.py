@@ -78,7 +78,7 @@ def parse_arguments():
     # Dataset setup
     parser.add_argument(
         "--data_path",
-        type=str, default="./data/big-dataset", help="Path to csv file"
+        type=str, default="./data/joint-dataset", help="Path to csv file"
     )
     parser.add_argument(
         "--datasets",
@@ -114,6 +114,24 @@ def parse_arguments():
         default=True,
         type=str2bool,
         help="perform multi-scale prediction (default: True)",
+    )
+    parser.add_argument(
+        "--model_name",
+        default="spin_model",
+        type=str,
+        help="Name of the saved model.",
+    )
+    parser.add_argument(
+        "--normalize_type",
+        type=str,
+        default="Std",
+        help="Type of normalization method."
+    )
+    parser.add_argument(
+        "--inference",
+        type=str2bool,
+        default=False,
+        help="Do inference."
     )
     # fmt: on
     return parser.parse_args()

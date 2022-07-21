@@ -3,7 +3,7 @@ import numpy as np
 
 
 def plot_predictions(images, masks, pred_masks, path, epoch):
-    fig, ax = plt.subplots(len(images), 4, figsize=(20, len(images) * 5))
+    fig, ax = plt.subplots(max(len(images), 2), 4, figsize=(20, len(images) * 5))
 
     for row in range(len(images)):
         ax[row, 0].imshow(images[row])
