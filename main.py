@@ -13,6 +13,8 @@ from torch import nn
 from models.base_unet import accuracy_fn, patch_accuracy_fn, f1_fn, patch_F1_fn
 from utils.utils import parse_arguments
 
+from topoloss.topoloss_pytorch import getTopoLoss
+
 
 def load_data_info_with_split(args):
     """Apply validation split to dataset.
@@ -86,7 +88,17 @@ def main(args):
         target_size = (400, 400)
 
         model = HourglassNet().to(args.device)
-        weights_init(model, args.seed)
+        start_epoch = 0
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        
+        if args.resume:
+            checkpoint = torch.load(os.path.join("checkpoints", args.resume))
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint['epoch']
+            # loss = checkpoint['loss']
+        else:
+            weights_init(model, args.seed)
         # summary(model, input_size=(3, target_size[0], target_size[1]))
 
         train_dataset = road_dataset.RoadDataset(
@@ -104,7 +116,6 @@ def main(args):
             args=args,
         )
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
         weights_angles = torch.ones(37).to(args.device)
         weights = torch.ones(2).to(args.device)
@@ -113,7 +124,7 @@ def main(args):
         ).to(args.device)
         road_loss = mIoULoss(weight=weights, n_classes=2).to(args.device)
 
-        loss_fn = [road_loss, angle_loss]
+        loss_fn = [road_loss, angle_loss, getTopoLoss]
 
     # create dataloaders
     train_loader = torch.utils.data.DataLoader(
@@ -132,7 +143,7 @@ def main(args):
     metric_fns = {"acc": accuracy_fn, "patch_acc": patch_accuracy_fn, "f1": f1_fn, "patch_f1": patch_F1_fn}
 
     history = {}
-    for epoch in range(args.num_epochs):
+    for epoch in range(start_epoch, start_epoch + args.num_epochs):
         start = timer()
         logging.info(f"--------- Training epoch {epoch + 1} / {args.num_epochs} ---------")
         metrics = train_one_epoch(
@@ -158,6 +169,14 @@ def main(args):
         end = timer()
         logging.info(f"\tEpoch {epoch + 1} took {timedelta(seconds=end - start)}")
 
+        if epoch % 5 == 0:
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': metrics,
+            }, os.path.join("checkpoints", args.model_name + "_checkpoint_epoch" + str(epoch)))
+
     logging.info("--------- Training finished. ---------")
 
     logging.info("Loss history:")
@@ -180,7 +199,6 @@ def main(args):
 
     total_end = timer()
     logging.info(f"Total time: {timedelta(seconds=total_end - total_start)}")
-    torch.save(model.state_dict(), args.model_name)
 
 
 if __name__ == "__main__":
