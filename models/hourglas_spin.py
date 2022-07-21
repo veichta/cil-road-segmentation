@@ -418,7 +418,6 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args
     optimizer.step()
 
     metrics["loss"].append(loss.item())
-    # FIXME: fix metrics
     if args.multi_scale_pred:
         pred_mask = pred_mask[-1]
         y = y[-1]
@@ -454,7 +453,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
 
             if show:
                 n = 4
-                images = [img.permute(1, 2, 0).numpy()[:, :, ::-1] for img in inputsBGR]
+                images = [img.permute(1, 2, 0).cpu().numpy()[:, :, ::-1] for img in inputsBGR]
                 images = [(img * 255).astype(np.uint8) for img in images]
                 images = [Image.fromarray(img) for img in images]
 
@@ -462,7 +461,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
                 masks = [(mask * 255).astype(np.uint8) for mask in masks]
                 masks = [Image.fromarray(mask).convert("L") for mask in masks]
 
-                pred_masks = [mask.argmax(dim=0).numpy() for mask in pred_mask]
+                pred_masks = [mask.argmax(dim=0).cpu().numpy() for mask in pred_mask]
                 pred_masks = [(mask * 255).astype(np.uint8) for mask in pred_masks]
                 pred_masks = [Image.fromarray(mask).convert("L") for mask in pred_masks]
 
@@ -470,7 +469,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
                     images[:n],
                     masks[:n],
                     pred_masks[:n],
-                    os.path.join("./checkpoints", f"predictions_{epoch + 1 }.pdf"),
+                    os.path.join("./checkpoints", f"predictions_" + args.model_name + +"_{epoch + 1 }.pdf"),
                     epoch,
                 )
                 show = False
@@ -481,7 +480,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
 
             for k, fn in metric_fns.items():
                 metrics[f"val_{k}"].append(
-                    fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device)).item()
+                    fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device))
                 )
 
             # summarize metrics, log to tensorboard and display
