@@ -331,15 +331,17 @@ class HourglassNet(nn.Module):
         return out_1, out_2
 
 
-def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, args):
+def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, epoch, args):
     miou = loss_fn[0]
     ce = loss_fn[1]
+    topo = loss_fn[2]
 
     if not args.multi_scale_pred:
         loss1 = miou(pred_mask, label.to(args.device))
         loss2 = ce(pred_vec, vecmap_angles.to(args.device))
-        loss = args.miou_weight * loss1 + args.ce_weight * loss2
-        return loss, loss1, loss2
+        loss3 = topo(pred_vec, vecmap_angles.to(args.device))
+        loss = args.miou_weight * loss1 + args.ce_weight * loss2 + loss3
+        return loss, loss1, loss2, loss3
 
     loss1 = miou(pred_mask[0], label[0].to(args.device), False)
     for idx in range(num_stacks - 1):
@@ -354,8 +356,13 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, ar
     for idx, pred_vecmap in enumerate(pred_vec[-2:]):
         loss2 += ce(pred_vecmap, vecmap_angles[idx + 1].to(args.device))
 
+    if epoch > 2000:
+        loss3 = topo(torch.amax(pred_mask[-1][0], dim=0), label[-1][0].to(args.device))
+        loss = args.weight_miou * loss1 + args.weight_vec * loss2 + loss3
+        return loss, loss1, loss2, loss3 
+
     loss = args.weight_miou * loss1 + args.weight_vec * loss2
-    return loss, loss1, loss2
+    return loss, loss1, loss2, 0
 
 
 def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch, args):
@@ -366,6 +373,8 @@ def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch
         "val_road_loss": [],
         "angle_loss": [],
         "val_angle_loss": [],
+        "topo_loss": [],
+        "val_topo_loss": [],
     }
     for k in list(metric_fns):
         metrics[k] = []
@@ -380,11 +389,12 @@ def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch
         #     continue
 
         inputsBGR = inputsBGR.to(args.device)
-        metrics, road_loss, angle_loss = train_step(
-            model, criterion, optimizer, metric_fns, metrics, inputsBGR, labels, vecmap_angles, args
+        metrics, road_loss, angle_loss, topo_loss = train_step(
+            model, criterion, optimizer, metric_fns, metrics, inputsBGR, labels, vecmap_angles, epoch, args
         )
         metrics["road_loss"].append(road_loss)
         metrics["angle_loss"].append(angle_loss)
+        metrics["topo_loss"].append(topo_loss)
 
         # pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
 
@@ -393,24 +403,28 @@ def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch
     logging.info(
         f"\tTrain Angle Loss: {sum(metrics['angle_loss']) / len(metrics['angle_loss']):.4f}"
     )
+    logging.info(
+        f"\tTrain Topo Loss: {sum(metrics['topo_loss']) / len(metrics['topo_loss']):.4f}"
+    )
     for k in list(metric_fns):
         logging.info(f"\tTrain {k}: {sum(metrics[k]) / len(metrics[k]):.4f}")
 
     return metrics
 
 
-def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args):
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoch, args):
     optimizer.zero_grad()
 
     pred_mask, pred_vec = model(x)
 
-    loss, road_loss, angle_loss = criterion(
+    loss, road_loss, angle_loss, topo_loss = criterion(
         num_stacks=model.num_stacks,
         loss_fn=loss_fn,
         pred_mask=pred_mask,
         pred_vec=pred_vec,
         label=y,
         vecmap_angles=y_vec,
+        epoch=epoch,
         args=args,
     )
 
@@ -425,24 +439,25 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args
     for k, fn in metric_fns.items():
         metrics[k].append(fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device)).item())
 
-    return metrics, road_loss, angle_loss
+    return metrics, road_loss, angle_loss, topo_loss
 
 
 def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args):
     model.eval()
     with torch.no_grad():  # do not keep track of gradients
-        show = True
+        show = (epoch % 5) == 0
         for (inputsBGR, y, y_vec) in tqdm(val_loader):
             inputsBGR = inputsBGR.to(device=args.device)
             pred_mask, pred_vec = model(inputsBGR)  # forward pass
 
-            loss, road_loss, angle_loss = criterion(
+            loss, road_loss, angle_loss, topo_loss = criterion(
                 num_stacks=model.num_stacks,
                 loss_fn=loss_fn,
                 pred_mask=pred_mask,
                 pred_vec=pred_vec,
                 label=y,
                 vecmap_angles=y_vec,
+                epoch=epoch,
                 args=args,
             )
 
@@ -477,6 +492,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
             metrics["val_loss"].append(loss.item())
             metrics["val_road_loss"].append(road_loss)
             metrics["val_angle_loss"].append(angle_loss)
+            metrics["val_topo_loss"].append(topo_loss)
 
             for k, fn in metric_fns.items():
                 metrics[f"val_{k}"].append(
@@ -490,6 +506,9 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
     )
     logging.info(
         f"\tValidation Angle Loss: {sum(metrics['val_angle_loss']) / len(metrics['val_angle_loss']):.4f}"
+    )
+    logging.info(
+        f"\tValidation Topo Loss: {sum(metrics['val_topo_loss']) / len(metrics['val_topo_loss']):.4f}"
     )
     for k in list(metric_fns):
         logging.info(f'\tValidation {k}: {sum(metrics[f"val_{k}"]) / len(metrics[f"val_{k}"]):.4f}')
