@@ -26,7 +26,13 @@ class RoadDataset(torch.utils.data.Dataset):
         # preprocess
         self.angle_theta = 10  # TODO: change to args
 
-        # to avoid Deadloack  between CV Threads and Pytorch Threads caused in resizing
+        self.is_train = is_train
+
+        # FIXME: fix for train and validation
+        self.mean_bgr = np.array([129.98980851, 132.72141085, 132.08936675])
+        self.deviation_bgr = np.array([53.78613508, 51.27242953, 50.02140993])
+
+        # to avoid Deadlock between CV Threads and Pytorch Threads caused in resizing
         cv2.setNumThreads(0)
 
     def __len__(self):
@@ -41,6 +47,22 @@ class RoadDataset(torch.utils.data.Dataset):
             raise FileNotFoundError(f"Image not found: {img_path}")
 
         image = cv2.imread(img_path).astype(float)
+        h, w, c = image.shape
+
+        if self.args.inference:
+            if self.augmentation:  # TODO: change to troch transforms
+                flip = np.random.choice(2) * 2 - 1
+                image = np.ascontiguousarray(image[:, ::flip, :])
+                rotation = np.random.randint(4) * 90
+                M = cv2.getRotationMatrix2D((w / 2, h / 2), rotation, 1)
+                image = cv2.warpAffine(image, M, (w, h))
+
+            # image = image / 255.0
+            image = self.reshape(image)
+            image = torch.tensor(image, dtype=torch.float32)
+            image = image.permute(2, 0, 1)
+
+            return image, []
 
         # load mask
         mask_path = os.path.join(self.dir, image_data["mpath"])
@@ -49,7 +71,6 @@ class RoadDataset(torch.utils.data.Dataset):
 
         gt = cv2.imread(mask_path, 0).astype(float)
 
-        h, w, c = image.shape
         if self.augmentation:  # TODO: change to troch transforms
             flip = np.random.choice(2) * 2 - 1
             image = np.ascontiguousarray(image[:, ::flip, :])
@@ -58,8 +79,9 @@ class RoadDataset(torch.utils.data.Dataset):
             M = cv2.getRotationMatrix2D((w / 2, h / 2), rotation, 1)
             image = cv2.warpAffine(image, M, (w, h))
             gt = cv2.warpAffine(gt, M, (w, h))
-
-        image = image / 255.0
+            
+        # image = image / 255.0
+        image = self.reshape(image)
         image = torch.tensor(image, dtype=torch.float32)
         image = image.permute(2, 0, 1)
 
@@ -76,6 +98,10 @@ class RoadDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
 
         image, gt = self.getRoadData(index)
+
+        if self.args.inference:
+            return image, [], []
+
         c, h, w = image.shape
 
         labels = []
@@ -91,7 +117,8 @@ class RoadDataset(torch.utils.data.Dataset):
             if val != 1:
                 gt_ = cv2.resize(
                     gt,
-                    (int(math.ceil(h / (val * 1.0))), int(math.ceil(w / (val * 1.0)))),
+                    (int(math.ceil(h / (val * 1.0))),
+                     int(math.ceil(w / (val * 1.0)))),
                     interpolation=cv2.INTER_NEAREST,
                 )
             else:
@@ -115,3 +142,29 @@ class RoadDataset(torch.utils.data.Dataset):
             vecmap_angles.append(vecmap_angle)
 
         return image, labels, vecmap_angles
+
+    def random_crop(self, image, gt, size):
+
+        w, h, _ = image.shape
+        crop_h, crop_w = size
+
+        start_x = np.random.randint(0, w - crop_w) if w - crop_w > 0 else 0
+        start_y = np.random.randint(0, h - crop_h) if h - crop_h > 0 else 0
+
+        image = image[start_x: start_x + crop_w, start_y: start_y + crop_h, :]
+        gt = gt[start_x: start_x + crop_w, start_y: start_y + crop_h]
+
+        return image, gt
+
+    def reshape(self, image):
+
+        if self.args.normalize_type == "Std":
+            image = (image - self.mean_bgr) / (3 * self.deviation_bgr)
+        elif self.args.normalize_type == "MinMax":
+            image = (image - self.min_bgr) / (self.max_bgr - self.min_bgr)
+            image = image * 2 - 1
+        elif self.args.normalize_type == "Mean":
+            image -= self.mean_bgr
+        else:
+            image = (image / 255.0) * 2 - 1
+        return image
