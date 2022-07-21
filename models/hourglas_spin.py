@@ -469,7 +469,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
                     images[:n],
                     masks[:n],
                     pred_masks[:n],
-                    os.path.join("./checkpoints", f"predictions_" + args.model_name + +"_{epoch + 1 }.pdf"),
+                    os.path.join("./checkpoints", "predictions_" + args.model_name + f"_{epoch + 1 }.pdf"),
                     epoch,
                 )
                 show = False
