@@ -4,6 +4,8 @@ import os
 import cv2
 import numpy as np
 import torch
+from torchvision import transforms
+from tqdm import tqdm
 from utils import affinity_utils
 
 
@@ -23,31 +25,62 @@ class RoadDataset(torch.utils.data.Dataset):
         self.crop_size = [target_size[0], target_size[1]]
         self.multi_scale_pred = multi_scale_pred
 
+        self.mean = np.array([125.78279375, 130.15193705, 130.92051354])
+        self.std = np.array([52.71067801, 49.9758017, 48.39758796])
+
+        self.normalize = torch.nn.Sequential(
+            transforms.Normalize(self.mean, self.std),
+        )
+
         # preprocess
         self.angle_theta = 10  # TODO: change to args
 
         # to avoid Deadloack  between CV Threads and Pytorch Threads caused in resizing
         cv2.setNumThreads(0)
 
+        self.images = []
+        self.masks = []
+        for index in tqdm(range(len(self.dataframe))):
+            image_data = self.dataframe.iloc[index, :]
+            # load image
+            img_path = os.path.join(self.dir, image_data["fpath"])
+            if not os.path.isfile(img_path):
+                raise FileNotFoundError(f"Image not found: {img_path}")
+
+            image = cv2.imread(img_path).astype(float)
+
+            # load mask
+            mask_path = os.path.join(self.dir, image_data["mpath"])
+            if not os.path.isfile(mask_path):
+                raise FileNotFoundError(f"Image not found: {mask_path}")
+
+            gt = cv2.imread(mask_path, 0).astype(float)
+
+            self.images.append(image)
+            self.masks.append(gt)
+
     def __len__(self):
         return len(self.dataframe)
 
     def getRoadData(self, index):
-        image_data = self.dataframe.iloc[index, :]
+        # image_data = self.dataframe.iloc[index, :]
 
-        # load image
-        img_path = os.path.join(self.dir, image_data["fpath"])
-        if not os.path.isfile(img_path):
-            raise FileNotFoundError(f"Image not found: {img_path}")
+        # # load image
+        # img_path = os.path.join(self.dir, image_data["fpath"])
+        # if not os.path.isfile(img_path):
+        #     raise FileNotFoundError(f"Image not found: {img_path}")
 
-        image = cv2.imread(img_path).astype(float)
+        # image = cv2.imread(img_path).astype(float)
 
-        # load mask
-        mask_path = os.path.join(self.dir, image_data["mpath"])
-        if not os.path.isfile(mask_path):
-            raise FileNotFoundError(f"Image not found: {mask_path}")
+        # # load mask
+        # mask_path = os.path.join(self.dir, image_data["mpath"])
+        # if not os.path.isfile(mask_path):
+        #     raise FileNotFoundError(f"Image not found: {mask_path}")
 
-        gt = cv2.imread(mask_path, 0).astype(float)
+        # gt = cv2.imread(mask_path, 0).astype(float)
+
+        image = self.images[index]
+        gt = self.masks[index]
 
         h, w, c = image.shape
         if self.augmentation:  # TODO: change to troch transforms
@@ -59,9 +92,10 @@ class RoadDataset(torch.utils.data.Dataset):
             image = cv2.warpAffine(image, M, (w, h))
             gt = cv2.warpAffine(gt, M, (w, h))
 
-        image = image / 255.0
+        # image = image / 255.0
         image = torch.tensor(image, dtype=torch.float32)
         image = image.permute(2, 0, 1)
+        image = self.normalize(image)
 
         return image, gt
 

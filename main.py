@@ -4,6 +4,7 @@ import time
 from datetime import timedelta
 from timeit import default_timer as timer
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -30,14 +31,34 @@ def load_data_info_with_split(args):
     for idx, row in cil_data_info.iterrows():
         if np.random.rand() <= args.val_split:
             row["split"] = "val"
+            cil_data_info.loc[idx] = row
 
     if args.datasets == "all":
         dataset_info[dataset_info["dataset"] == "CIL"] = cil_data_info
     elif args.datasets == "cil":
         dataset_info = cil_data_info
+    elif args.datasets == "cil-mrd":
+        dataset_info[dataset_info["dataset"] == "CIL"] = cil_data_info
+        dataset_info = dataset_info[dataset_info["dataset"] != "DeepGlobe"]
+    elif args.datasets == "cil-dg":
+        dataset_info[dataset_info["dataset"] == "CIL"] = cil_data_info
+        dataset_info = dataset_info[dataset_info["dataset"] != "MRD"]
+    else:
+        raise ValueError(f"Unknown dataset: {args.datasets}")
+
+    if args.min_pixels is not None:
+        for idx, row in dataset_info.iterrows():
+            if row["n_pixels"] < args.min_pixels and row["dataset"] != "CIL":
+                row["split"] = "none"
+                dataset_info.loc[idx] = row
 
     train_df = dataset_info[dataset_info["split"] == "train"]
     val_df = dataset_info[dataset_info["split"] == "val"]
+    out = dataset_info[dataset_info["split"] == "none"]
+
+    logging.info(f"Train dataset: {train_df.shape[0]}")
+    logging.info(f"Validation dataset: {val_df.shape[0]}")
+    logging.info(f"Ignoring: {out.shape[0]}")
     return train_df, val_df
 
 
@@ -66,7 +87,7 @@ def main(args):
 
         # create model
         model = UNet().to(args.device)
-        summary(model, input_size=(args.batch_size, 384, 384))
+        # summary(model, input_size=(args.batch_size, 384, 384))
 
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -82,7 +103,7 @@ def main(args):
 
         model = HourglassNet().to(args.device)
         weights_init(model, args.seed)
-        summary(model, input_size=(3, target_size[0], target_size[1]))
+        # summary(model, input_size=(3, target_size[0], target_size[1]))
 
         train_dataset = road_dataset.RoadDataset(
             dataframe=train_df,
@@ -102,10 +123,11 @@ def main(args):
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
         weights_angles = torch.ones(37).to(args.device)
-        weights = torch.ones(2).to(args.device)
         angle_loss = CrossEntropyLoss2d(
             weight=weights_angles, size_average=True, ignore_index=255, reduce=True
         ).to(args.device)
+
+        weights = torch.ones(2).to(args.device)
         road_loss = mIoULoss(weight=weights, n_classes=2).to(args.device)
 
         loss_fn = [road_loss, angle_loss]
@@ -114,7 +136,7 @@ def main(args):
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False,
         num_workers=args.num_workers,
     )
     val_loader = torch.utils.data.DataLoader(
@@ -127,6 +149,7 @@ def main(args):
     metric_fns = {"acc": accuracy_fn, "patch_acc": patch_accuracy_fn}
 
     history = {}
+    best_acc = 0
     for epoch in range(args.num_epochs):
         start = timer()
         logging.info(f"--------- Training epoch {epoch + 1} / {args.num_epochs} ---------")
@@ -149,7 +172,14 @@ def main(args):
             metrics=metrics,
             args=args,
         )
+
         history[f"{epoch}"] = metrics
+
+        score = sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
+        if score > best_acc:
+            best_acc = score
+            torch.save(model.state_dict(), "./checkpoints/best_model.pth")
+
         end = timer()
         logging.info(f"\tEpoch {epoch + 1} took {timedelta(seconds=end - start)}")
 
@@ -157,21 +187,70 @@ def main(args):
 
     logging.info("Loss history:")
     for key, value in history.items():
+        metrics = value
         logging.info(
             f"\tEpoch {key}: Train Loss: {sum(metrics['loss']) / len(metrics['loss']):.4f}, Val Loss: {sum(metrics['val_loss']) / len(metrics['val_loss']):.4f}"
         )
 
+    plt.plot(
+        [sum(metrics["loss"]) / len(metrics["loss"]) for _, metrics in history.items()],
+        label="Train Loss",
+    )
+    plt.plot(
+        [sum(metrics["val_loss"]) / len(metrics["val_loss"]) for _, metrics in history.items()],
+        label="Val Loss",
+    )
+    plt.title("Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.savefig("./checkpoints/history_loss.pdf")
+    plt.close()
+
     logging.info("Acc history:")
     for key, value in history.items():
+        metrics = value
         logging.info(
             f"\tEpoch {key}: Train Acc: {sum(metrics['acc']) / len(metrics['acc']):.4f}, Val Acc: {sum(metrics['val_acc']) / len(metrics['val_acc']):.4f}"
         )
+    plt.plot(
+        [sum(metrics["acc"]) / len(metrics["acc"]) for _, metrics in history.items()],
+        label="Train Acc",
+    )
+    plt.plot(
+        [sum(metrics["val_acc"]) / len(metrics["val_acc"]) for _, metrics in history.items()],
+        label="Val Acc",
+    )
+    plt.title("Accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.legend()
+    plt.savefig("./checkpoints/history_acc.pdf")
+    plt.close()
 
     logging.info("Patch Acc history:")
     for key, value in history.items():
+        metrics = value
         logging.info(
             f"\tEpoch {key}: Train Patch Acc: {sum(metrics['patch_acc']) / len(metrics['patch_acc']):.4f}, Val Patch Acc: {sum(metrics['val_patch_acc']) / len(metrics['val_patch_acc']):.4f}"
         )
+    plt.plot(
+        [sum(metrics["patch_acc"]) / len(metrics["patch_acc"]) for _, metrics in history.items()],
+        label="Train Patch Acc",
+    )
+    plt.plot(
+        [
+            sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
+            for _, metrics in history.items()
+        ],
+        label="Val Patch Acc",
+    )
+    plt.title("Patch Accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.legend()
+    plt.savefig("./checkpoints/history_patch_acc.pdf")
+    plt.close()
 
     total_end = timer()
     logging.info(f"Total time: {timedelta(seconds=total_end - total_start)}")
@@ -184,7 +263,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         format="[%(asctime)s - %(levelname)s] %(message)s",
         level=logging.INFO,
-        # filename=f"./{args.log_dir}/{args.model}-{timestamp}.log",
+        filename=f"./{args.log_dir}/{args.model}-{timestamp}.log",
     )
 
     main(args)

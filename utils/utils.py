@@ -2,10 +2,8 @@ import argparse
 import math
 import random
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from PIL import Image
 
 
 def parse_arguments():
@@ -25,11 +23,6 @@ def parse_arguments():
     parser.add_argument(
         "--backbone",
         type=str, help="Backbone name"
-    )
-    #Training data
-    parser.add_argument(
-        "--dataset", 
-        type=str, default="cil", help="Dataset used for training."
     )
 
     parser.add_argument(
@@ -82,11 +75,15 @@ def parse_arguments():
     )
     parser.add_argument(
         "--datasets",
-        type=str, choices=["all", "cil"], default="all", help="Datasets to use"
+        type=str, choices=["all", "cil", "cil-mrd", "cil-dg"], default="all", help="Datasets to use"
+    )
+    parser.add_argument(
+        "--min_pixels",
+        type=int, default=0, help="Cut off samples with small pixel count"
     )
     parser.add_argument(
         "--num_workers", 
-        type=int, default=4, help="Number of workers"
+        type=int, default=6, help="Number of workers"
     )
 
     # General setup
