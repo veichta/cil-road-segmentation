@@ -68,9 +68,19 @@ def main(args):
     np.random.seed(args.seed)
 
     logging.info(vars(args))
+
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    checkpoint_dir = f"./checkpoints/{args.model}_{timestamp}"
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+
     total_start = timer()
 
     train_df, val_df = load_data_info_with_split(args)
+
+    # store dataset info
+    train_df.to_csv(os.path.join(checkpoint_dir, "train_dataset.csv"), index=False)
+    val_df.to_csv(os.path.join(checkpoint_dir, "val_dataset.csv"), index=False)
 
     if args.model == "unet":
         logging.info("Using UNet.")
@@ -132,6 +142,10 @@ def main(args):
 
         loss_fn = [road_loss, angle_loss]
 
+    if args.resume:
+        model.load_state_dict(torch.load(args.resume, map_location=args.device))
+        # optimizer.load_state_dict(torch.load(args.resume, map_location=args.device))
+
     # create dataloaders
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -170,6 +184,7 @@ def main(args):
             metric_fns=metric_fns,
             epoch=epoch,
             metrics=metrics,
+            checkpoint_path=checkpoint_dir,
             args=args,
         )
 
@@ -178,7 +193,10 @@ def main(args):
         score = sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
         if score > best_acc:
             best_acc = score
-            torch.save(model.state_dict(), "./checkpoints/best_model.pth")
+            torch.save(model.state_dict(), f"{checkpoint_dir}/best_model.pth")
+
+        if (epoch + 1) % 5 == 0:
+            torch.save(model.state_dict(), f"{checkpoint_dir}/model_{epoch}.pth")
 
         end = timer()
         logging.info(f"\tEpoch {epoch + 1} took {timedelta(seconds=end - start)}")
@@ -204,7 +222,7 @@ def main(args):
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.legend()
-    plt.savefig("./checkpoints/history_loss.pdf")
+    plt.savefig(f"{checkpoint_dir}/history_loss.pdf")
     plt.close()
 
     logging.info("Acc history:")
@@ -225,7 +243,7 @@ def main(args):
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.legend()
-    plt.savefig("./checkpoints/history_acc.pdf")
+    plt.savefig(f"{checkpoint_dir}/history_acc.pdf")
     plt.close()
 
     logging.info("Patch Acc history:")
@@ -249,7 +267,7 @@ def main(args):
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.legend()
-    plt.savefig("./checkpoints/history_patch_acc.pdf")
+    plt.savefig(f"{checkpoint_dir}/history_patch_acc.pdf")
     plt.close()
 
     total_end = timer()
@@ -263,7 +281,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         format="[%(asctime)s - %(levelname)s] %(message)s",
         level=logging.INFO,
-        filename=f"./{args.log_dir}/{args.model}-{timestamp}.log",
+        # filename=f"./{args.log_dir}/{args.model}-{timestamp}.log",
     )
 
     main(args)

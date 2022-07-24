@@ -17,19 +17,16 @@ class RoadDataset(torch.utils.data.Dataset):
         # paths
         self.dir = self.args.data_path
 
-        # list of all images
-        # self.images = [line.rstrip("\n") for line in open(self.image_list)]
-
         # augmentations
         self.augmentation = is_train
         self.crop_size = [target_size[0], target_size[1]]
         self.multi_scale_pred = multi_scale_pred
 
-        self.mean = np.array([125.78279375, 130.15193705, 130.92051354])
-        self.std = np.array([52.71067801, 49.9758017, 48.39758796])
+        self.channel_mean = [125.78279375, 130.15193705, 130.92051354]
+        self.channel_std = [52.71067801, 49.9758017, 48.39758796]
 
         self.normalize = torch.nn.Sequential(
-            transforms.Normalize(self.mean, self.std),
+            transforms.Normalize(self.channel_mean, self.channel_std),
         )
 
         # preprocess
@@ -63,22 +60,6 @@ class RoadDataset(torch.utils.data.Dataset):
         return len(self.dataframe)
 
     def getRoadData(self, index):
-        # image_data = self.dataframe.iloc[index, :]
-
-        # # load image
-        # img_path = os.path.join(self.dir, image_data["fpath"])
-        # if not os.path.isfile(img_path):
-        #     raise FileNotFoundError(f"Image not found: {img_path}")
-
-        # image = cv2.imread(img_path).astype(float)
-
-        # # load mask
-        # mask_path = os.path.join(self.dir, image_data["mpath"])
-        # if not os.path.isfile(mask_path):
-        #     raise FileNotFoundError(f"Image not found: {mask_path}")
-
-        # gt = cv2.imread(mask_path, 0).astype(float)
-
         image = self.images[index]
         gt = self.masks[index]
 

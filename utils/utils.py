@@ -79,7 +79,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--min_pixels",
-        type=int, default=0, help="Cut off samples with small pixel count"
+        type=int, default=None, help="Cut off samples with small pixel count"
     )
     parser.add_argument(
         "--num_workers", 

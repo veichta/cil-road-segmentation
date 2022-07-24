@@ -2,16 +2,45 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def denormalize_img(img):
+    channel_mean = [125.78279375, 130.15193705, 130.92051354]
+    channel_std = [52.71067801, 49.9758017, 48.39758796]
+
+    img = np.array(img, dtype=np.float32)
+    for c in range(3):
+        img[:, :, c] = (img[:, :, c] * channel_std[c]) + channel_mean[c]
+
+    # plt.imshow(np.array(img, dtype=np.uint8))
+    # plt.show()
+
+    return np.array(img, dtype=np.uint8)
+
+
 def plot_predictions(images, masks, pred_masks, path, epoch):
     fig, ax = plt.subplots(len(images), 4, figsize=(20, len(images) * 5))
 
+    images = [img.permute(1, 2, 0).cpu().numpy()[:, :, ::-1] for img in images]
+    images = [denormalize_img(img) for img in images]
+
+    masks = [mask.cpu().numpy() for mask in masks]
+    pred_masks = [pred_mask.argmax(dim=0).cpu().numpy() for pred_mask in pred_masks]
+
+    masks = [(mask * 255).astype(np.uint8) for mask in masks]
+    pred_masks = [(pred_mask * 255).astype(np.uint8) for pred_mask in pred_masks]
+
     for row in range(len(images)):
-        ax[row, 0].imshow(images[row])
-        ax[row, 1].imshow(masks[row], cmap="gray")
-        ax[row, 2].imshow(pred_masks[row], cmap="gray")
-        pred_mask = np.array(pred_masks[row])
-        img = np.array(images[row])
-        img[pred_mask > 0.5 * 255] = [255]
+        mask = masks[row]
+        pred_mask = pred_masks[row]
+
+        img = images[row].copy()
+        img[mask < 255] = img[mask < 255] * 0.5
+        ax[row, 0].imshow(img)
+
+        ax[row, 1].imshow(mask, cmap="gray")
+        ax[row, 2].imshow(pred_mask, cmap="gray")
+
+        img = images[row].copy()
+        img[pred_mask < 255] = img[pred_mask < 255] * 0.5
         ax[row, 3].imshow(img)
 
     ax[0, 0].set_title("Image")

@@ -6,7 +6,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
 from tqdm import tqdm
 from utils.evaluate_utils import plot_predictions
 
@@ -429,7 +428,7 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args
     return metrics, road_loss, angle_loss
 
 
-def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args):
+def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, checkpoint_path, args):
     model.eval()
     with torch.no_grad():  # do not keep track of gradients
         show = True
@@ -452,33 +451,14 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args)
                 pred_vec = pred_vec[-1]
                 y = y[-1]
 
-            if show and (epoch + 1) % 3 == 0:
+            if show and (epoch + 1) % 1 == 0:
                 n = 4
-                mean = np.array([125.78279375, 130.15193705, 130.92051354])
-                std = np.array([52.71067801, 49.9758017, 48.39758796])
-                images = [img.permute(1, 2, 0).cpu().numpy()[:, :, ::-1] for img in inputsBGR]
-
-                for img in images:
-                    img[:, :, 0] = img[:, :, 0] * std[0] + mean[0]
-                    img[:, :, 1] = img[:, :, 1] * std[1] + mean[1]
-                    img[:, :, 2] = img[:, :, 2] * std[2] + mean[2]
-
-                images = [(img).astype(np.uint8) for img in images]
-                images = [Image.fromarray(img) for img in images]
-
-                masks = [mask.cpu().numpy() for mask in y]
-                masks = [(mask * 255).astype(np.uint8) for mask in masks]
-                masks = [Image.fromarray(mask).convert("L") for mask in masks]
-
-                pred_masks = [mask.argmax(dim=0).cpu().numpy() for mask in pred_mask]
-                pred_masks = [(mask * 255).astype(np.uint8) for mask in pred_masks]
-                pred_masks = [Image.fromarray(mask).convert("L") for mask in pred_masks]
 
                 plot_predictions(
-                    images[:n],
-                    masks[:n],
-                    pred_masks[:n],
-                    os.path.join("./checkpoints", f"predictions_{epoch + 1}.pdf"),
+                    inputsBGR[:n],
+                    y[:n],
+                    pred_mask[:n],
+                    os.path.join(checkpoint_path, f"predictions_{epoch + 1}.pdf"),
                     epoch,
                 )
                 show = False
