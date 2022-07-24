@@ -385,7 +385,6 @@ def train_one_epoch(
             model,
             criterion,
             optimizer,
-            lr_scheduler,
             metric_fns,
             metrics,
             inputsBGR,
@@ -397,6 +396,7 @@ def train_one_epoch(
         metrics["angle_loss"].append(angle_loss)
 
         # pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
+    lr_scheduler.step()
 
     logging.info(f"\tTrain Loss: {sum(metrics['loss']) / len(metrics['loss']):.4f}")
     logging.info(f"\tTrain Road Loss: {sum(metrics['road_loss']) / len(metrics['road_loss']):.4f}")
@@ -409,7 +409,7 @@ def train_one_epoch(
     return metrics
 
 
-def train_step(model, loss_fn, optimizer, lr_scheduler, metric_fns, metrics, x, y, y_vec, args):
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args):
     optimizer.zero_grad()
 
     pred_mask, pred_vec = model(x)
@@ -426,7 +426,6 @@ def train_step(model, loss_fn, optimizer, lr_scheduler, metric_fns, metrics, x, 
 
     loss.backward()
     optimizer.step()
-    lr_scheduler.step()
 
     metrics["loss"].append(loss.item())
     # FIXME: fix metrics
