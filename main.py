@@ -108,7 +108,7 @@ def main(args):
         logging.info("Using Spin Model.")
         from datasets import road_dataset
         from models.hourglas_spin import HourglassNet, evaluate_model, train_one_epoch
-        from utils.loss import CrossEntropyLoss2d, mIoULoss
+        from utils.loss import CrossEntropyLoss2d, getTopoLoss, mIoULoss
         from utils.utils import weights_init
 
         target_size = (400, 400)
@@ -148,7 +148,7 @@ def main(args):
         weights = torch.ones(2).to(args.device)
         road_loss = mIoULoss(weight=weights, n_classes=2).to(args.device)
 
-        loss_fn = [road_loss, angle_loss]
+        loss_fn = [road_loss, angle_loss, getTopoLoss]
 
     if args.resume:
         model.load_state_dict(torch.load(args.resume, map_location=args.device))

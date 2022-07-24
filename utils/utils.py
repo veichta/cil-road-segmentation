@@ -61,11 +61,15 @@ def parse_arguments():
     )
     parser.add_argument(
         "--weight_miou", 
-        type=float, default=1, help="Dropout"
+        type=float, default=1, help="Weight for road loss"
     )
     parser.add_argument(
         "--weight_vec", 
-        type=float, default=1, help="Dropout"
+        type=float, default=1, help="Weight for orientation loss"
+    )
+    parser.add_argument(
+        "--weight_topo",
+        type=float, default=0, help="Weight for topo loss"
     )
 
     # Dataset setup
@@ -133,7 +137,7 @@ def weights_init(model, manual_seed=7):
     random.seed(manual_seed)
     torch.cuda.manual_seed_all(manual_seed)
     for m in model.modules():
-        if isinstance(m, torch.nn.Conv2d) or isinstance(m, torch.nn.ConvTranspose2d):
+        if isinstance(m, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
             n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
             m.weight.data.normal_(0, math.sqrt(2.0 / n))
         elif isinstance(m, torch.nn.BatchNorm2d):

@@ -10,6 +10,7 @@ tqdm
 wandb
 scikit-image
 numba
+gudhi
 
 black
 isort
