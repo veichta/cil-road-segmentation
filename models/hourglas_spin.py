@@ -395,7 +395,6 @@ def train_one_epoch(
         metrics["road_loss"].append(road_loss)
         metrics["angle_loss"].append(angle_loss)
 
-        # pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
     lr_scheduler.step()
 
     logging.info(f"\tTrain Loss: {sum(metrics['loss']) / len(metrics['loss']):.4f}")
