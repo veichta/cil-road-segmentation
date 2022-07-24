@@ -1,1 +1,1 @@
-python main.py --model spin --device cuda --data_path /mnt/ds3lab-scratch/veichta/road-seg/big-dataset --num_epochs 100 --batch_size 6 --num_workers 6 --min_pixels 50000 --datasets cil-dg --weight_miou 4
+python main.py --model spin --device cuda --data_path /mnt/ds3lab-scratch/veichta/road-seg/big-dataset --num_epochs 120 --batch_size 6 --num_workers 6 --min_pixels 50000 --datasets cil --weight_miou 4

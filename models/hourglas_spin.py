@@ -357,7 +357,9 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, ar
     return loss, loss1, loss2
 
 
-def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch, args):
+def train_one_epoch(
+    train_loader, model, criterion, optimizer, lr_scheduler, metric_fns, epoch, args
+):
     metrics = {
         "loss": [],
         "val_loss": [],
@@ -380,7 +382,16 @@ def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch
 
         inputsBGR = inputsBGR.to(args.device)
         metrics, road_loss, angle_loss = train_step(
-            model, criterion, optimizer, metric_fns, metrics, inputsBGR, labels, vecmap_angles, args
+            model,
+            criterion,
+            optimizer,
+            lr_scheduler,
+            metric_fns,
+            metrics,
+            inputsBGR,
+            labels,
+            vecmap_angles,
+            args,
         )
         metrics["road_loss"].append(road_loss)
         metrics["angle_loss"].append(angle_loss)
@@ -398,7 +409,7 @@ def train_one_epoch(train_loader, model, criterion, optimizer, metric_fns, epoch
     return metrics
 
 
-def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args):
+def train_step(model, loss_fn, optimizer, lr_scheduler, metric_fns, metrics, x, y, y_vec, args):
     optimizer.zero_grad()
 
     pred_mask, pred_vec = model(x)
@@ -415,6 +426,7 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args
 
     loss.backward()
     optimizer.step()
+    lr_scheduler.step()
 
     metrics["loss"].append(loss.item())
     # FIXME: fix metrics
@@ -451,14 +463,14 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
                 pred_vec = pred_vec[-1]
                 y = y[-1]
 
-            if show and (epoch + 1) % 1 == 0:
-                n = 4
+            if show and (epoch + 1) % 5 == 0:
+                n = 5
 
                 plot_predictions(
                     inputsBGR[:n],
                     y[:n],
                     pred_mask[:n],
-                    os.path.join(checkpoint_path, f"predictions_{epoch + 1}.pdf"),
+                    os.path.join(checkpoint_path, "plots", f"predictions_{epoch + 1}.pdf"),
                     epoch,
                 )
                 show = False

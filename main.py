@@ -73,6 +73,8 @@ def main(args):
     checkpoint_dir = f"./checkpoints/{args.model}_{timestamp}"
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
+        os.makedirs(os.path.join(checkpoint_dir, "models"))
+        os.makedirs(os.path.join(checkpoint_dir, "plots"))
 
     total_start = timer()
 
@@ -131,6 +133,12 @@ def main(args):
         )
 
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        # multi step lr scheduler
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer,
+            milestones=[60, 90, 110],
+            gamma=0.1,
+        )
 
         weights_angles = torch.ones(37).to(args.device)
         angle_loss = CrossEntropyLoss2d(
@@ -172,6 +180,7 @@ def main(args):
             model=model,
             criterion=loss_fn,
             optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
             metric_fns=metric_fns,
             epoch=epoch,
             args=args,
@@ -193,10 +202,10 @@ def main(args):
         score = sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
         if score > best_acc:
             best_acc = score
-            torch.save(model.state_dict(), f"{checkpoint_dir}/best_model.pth")
+            torch.save(model.state_dict(), f"{checkpoint_dir}/models/best_model.pth")
 
         if (epoch + 1) % 5 == 0:
-            torch.save(model.state_dict(), f"{checkpoint_dir}/model_{epoch}.pth")
+            torch.save(model.state_dict(), f"{checkpoint_dir}/models/model_{epoch}.pth")
 
         end = timer()
         logging.info(f"\tEpoch {epoch + 1} took {timedelta(seconds=end - start)}")
@@ -222,7 +231,7 @@ def main(args):
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.legend()
-    plt.savefig(f"{checkpoint_dir}/history_loss.pdf")
+    plt.savefig(f"{checkpoint_dir}/plots/history_loss.pdf")
     plt.close()
 
     logging.info("Acc history:")
@@ -243,7 +252,7 @@ def main(args):
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.legend()
-    plt.savefig(f"{checkpoint_dir}/history_acc.pdf")
+    plt.savefig(f"{checkpoint_dir}/plots/history_acc.pdf")
     plt.close()
 
     logging.info("Patch Acc history:")
@@ -267,7 +276,7 @@ def main(args):
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.legend()
-    plt.savefig(f"{checkpoint_dir}/history_patch_acc.pdf")
+    plt.savefig(f"{checkpoint_dir}/plots/history_patch_acc.pdf")
     plt.close()
 
     total_end = timer()
