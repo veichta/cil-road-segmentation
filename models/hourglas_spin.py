@@ -355,20 +355,40 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, ar
     for idx, pred_vecmap in enumerate(pred_vec[-2:]):
         loss2 += ce(pred_vecmap, vecmap_angles[idx + 1].to(args.device))
 
+    loss1 = loss1 / num_stacks
+    loss2 = loss2 / num_stacks
+
     loss = args.weight_miou * loss1 + args.weight_vec * loss2
 
     if args.weight_topo > 0:
         # apply softmax over first dimension
-        loss3 = sum(
+        l3 = sum(
             topo(
-                F.softmax(pred_mask[-1], dim=1)[batch_idx, 1, :, :],
-                label[-1][batch_idx].to(args.device),
+                F.softmax(pred_mask[0], dim=1)[batch_idx, 1, :, :],
+                label[0][batch_idx].to(args.device),
                 args.device,
             )
             for batch_idx in range(pred_mask[-1].shape[0])
         )
 
-        loss3 = loss3 / pred_mask[-1].shape[0]
+        l3 /= pred_mask[0].shape[0]
+
+        loss3 = l3
+
+        for idx in range(num_stacks - 1):
+            l3 = sum(
+                topo(
+                    F.softmax(pred_mask[idx], dim=1)[batch_idx, 1, :, :],
+                    label[idx][batch_idx].to(args.device),
+                    args.device,
+                )
+                for batch_idx in range(pred_mask[-1].shape[0])
+            )
+
+            l3 /= pred_mask[idx].shape[0]
+            loss3 += l3
+
+        loss3 = loss3 / num_stacks
 
         loss += args.weight_topo * loss3
 
