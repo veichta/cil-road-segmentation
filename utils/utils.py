@@ -71,6 +71,11 @@ def parse_arguments():
         "--weight_topo",
         type=float, default=0, help="Weight for topo loss"
     )
+    parser.add_argument(
+        "--topo_after",
+        type=int, default=50, help="Add topo weight after epoch"
+    )
+    
 
     # Dataset setup
     parser.add_argument(
@@ -101,7 +106,12 @@ def parse_arguments():
     )
     parser.add_argument(
         "--resume", 
-        type=str, default=None, help="Resume from checkpoint")
+        type=str, default=None, help="Resume from checkpoint"
+    )
+    parser.add_argument(
+        "--start_epoch", 
+        type=int, default=0, help="Resume from epoch"
+    )
     parser.add_argument(
         "--save_dir",
         type=str, default="./checkpoints", help="Directory to save checkpoints"

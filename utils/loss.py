@@ -195,7 +195,7 @@ def getCriticalPoints(likelihood):
     return pd_lh, bcp_lh, dcp_lh, True
 
 
-def getTopoLoss(likelihood_tensor, gt_tensor, device, topo_size=100):
+def getTopoLoss(likelihood_tensor, gt_tensor, device, topo_size=200):
     """
     Calculate the topology loss of the predicted image and ground truth image
     Warning: To make sure the topology loss is able to back-propagation, likelihood

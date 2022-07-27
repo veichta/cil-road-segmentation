@@ -2,6 +2,7 @@ import math
 import os
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torchvision import transforms
@@ -25,8 +26,14 @@ class RoadDataset(torch.utils.data.Dataset):
         self.channel_mean = [125.78279375, 130.15193705, 130.92051354]
         self.channel_std = [52.71067801, 49.9758017, 48.39758796]
 
+        self.augment = torch.nn.Sequential(
+            transforms.RandomAdjustSharpness(3),
+            transforms.GaussianBlur(3),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.001),
+            transforms.RandomErasing(p=0.5, scale=(0.1, 0.1), ratio=(0.3, 3.3)),
+        )
         self.normalize = torch.nn.Sequential(
-            transforms.Normalize(self.channel_mean, self.channel_std),
+            transforms.Normalize(mean=[0.510, 0.521, 0.518], std=[0.239, 0.218, 0.209])
         )
 
         # preprocess
@@ -75,8 +82,11 @@ class RoadDataset(torch.utils.data.Dataset):
 
         # image = image / 255.0
         image = torch.tensor(image, dtype=torch.float32)
-        image = image.permute(2, 0, 1)
-        image = self.normalize(image)
+        image = image.permute(2, 0, 1) / 255.0
+        if self.augmentation:
+            image = self.augment(image)
+
+        # image = self.normalize(image)
 
         return image, gt
 

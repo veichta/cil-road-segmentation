@@ -56,25 +56,24 @@ def load_data_info_with_split(args):
     val_df = dataset_info[dataset_info["split"] == "val"]
     out = dataset_info[dataset_info["split"] == "none"]
 
-    logging.info(f"Train dataset: {train_df.shape[0]}")
-    logging.info(f"Validation dataset: {val_df.shape[0]}")
-    logging.info(f"Ignoring: {out.shape[0]}")
+    logging.info("Dataset info:")
+    logging.info(f"\tTrain dataset: {train_df.shape[0]} images")
+    logging.info(f"\tValidation dataset: {val_df.shape[0]} images")
+    logging.info(f"\tIgnoring: {out.shape[0]} images")
     return train_df, val_df
 
 
-def main(args):
+def main(checkpoint_dir, args):
     # set seeds
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     logging.info(vars(args))
 
-    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-    checkpoint_dir = f"./checkpoints/{args.model}_{timestamp}"
-    if not os.path.exists(checkpoint_dir):
-        os.makedirs(checkpoint_dir)
-        os.makedirs(os.path.join(checkpoint_dir, "models"))
-        os.makedirs(os.path.join(checkpoint_dir, "plots"))
+    logging.info("Loss Weigths:")
+    logging.info(f"\tRoad weight: {args.weight_miou}")
+    logging.info(f"\tOrientation weight: {args.weight_vec}")
+    logging.info(f"\tTopo weight: {args.weight_topo}")
 
     total_start = timer()
 
@@ -136,7 +135,7 @@ def main(args):
         # multi step lr scheduler
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
             optimizer,
-            milestones=[60, 90, 110],
+            milestones=[120, 150, 180],
             gamma=0.1,
         )
 
@@ -172,7 +171,7 @@ def main(args):
 
     history = {}
     best_acc = 0
-    for epoch in range(args.num_epochs):
+    for epoch in range(args.start_epoch, args.num_epochs):
         start = timer()
         logging.info(f"--------- Training epoch {epoch + 1} / {args.num_epochs} ---------")
         metrics = train_one_epoch(
@@ -201,80 +200,107 @@ def main(args):
 
         score = sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
         if score > best_acc:
+            logging.info("\tNew best model.")
             best_acc = score
             torch.save(model.state_dict(), f"{checkpoint_dir}/models/best_model.pth")
 
-        if (epoch + 1) % 5 == 0:
-            torch.save(model.state_dict(), f"{checkpoint_dir}/models/model_{epoch}.pth")
+        if (epoch + 1) % 10 == 0:
+            torch.save(model.state_dict(), f"{checkpoint_dir}/models/model_{epoch + 1}.pth")
 
         end = timer()
         logging.info(f"\tEpoch {epoch + 1} took {timedelta(seconds=end - start)}")
 
     logging.info("--------- Training finished. ---------")
 
-    logging.info("Loss history:")
-    for key, value in history.items():
-        metrics = value
-        logging.info(
-            f"\tEpoch {key}: Train Loss: {sum(metrics['loss']) / len(metrics['loss']):.4f}, Val Loss: {sum(metrics['val_loss']) / len(metrics['val_loss']):.4f}"
-        )
+    losses = [sum(metrics["loss"]) / len(metrics["loss"]) for _, metrics in history.items()]
+    val_losses = [
+        sum(metrics["val_loss"]) / len(metrics["val_loss"]) for _, metrics in history.items()
+    ]
+    road_losses = [
+        sum(metrics["road_loss"]) / len(metrics["road_loss"]) for _, metrics in history.items()
+    ]
+    val_road_losses = [
+        sum(metrics["val_road_loss"]) / len(metrics["val_road_loss"])
+        for _, metrics in history.items()
+    ]
+    angle_losses = [
+        sum(metrics["angle_loss"]) / len(metrics["angle_loss"]) for _, metrics in history.items()
+    ]
+    val_angle_losses = [
+        sum(metrics["val_angle_loss"]) / len(metrics["val_angle_loss"])
+        for _, metrics in history.items()
+    ]
+    topo_losses = [
+        sum(metrics["topo_loss"]) / len(metrics["topo_loss"]) for _, metrics in history.items()
+    ]
+    val_topo_losses = [
+        sum(metrics["val_topo_loss"]) / len(metrics["val_topo_loss"])
+        for _, metrics in history.items()
+    ]
+    accs = [sum(metrics["acc"]) / len(metrics["acc"]) for _, metrics in history.items()]
+    val_accs = [sum(metrics["val_acc"]) / len(metrics["val_acc"]) for _, metrics in history.items()]
+    patch_accs = [
+        sum(metrics["patch_acc"]) / len(metrics["patch_acc"]) for _, metrics in history.items()
+    ]
+    val_patch_accs = [
+        sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
+        for _, metrics in history.items()
+    ]
 
-    plt.plot(
-        [sum(metrics["loss"]) / len(metrics["loss"]) for _, metrics in history.items()],
-        label="Train Loss",
-    )
-    plt.plot(
-        [sum(metrics["val_loss"]) / len(metrics["val_loss"]) for _, metrics in history.items()],
-        label="Val Loss",
-    )
-    plt.title("Loss")
+    plt.plot(losses, label="Train Loss")
+    plt.plot(val_losses, label="Val Loss")
+    plt.ylim(-4, 4)
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
+    plt.title("Overall Loss")
     plt.legend()
     plt.savefig(f"{checkpoint_dir}/plots/history_loss.pdf")
     plt.close()
 
-    logging.info("Acc history:")
-    for key, value in history.items():
-        metrics = value
-        logging.info(
-            f"\tEpoch {key}: Train Acc: {sum(metrics['acc']) / len(metrics['acc']):.4f}, Val Acc: {sum(metrics['val_acc']) / len(metrics['val_acc']):.4f}"
-        )
-    plt.plot(
-        [sum(metrics["acc"]) / len(metrics["acc"]) for _, metrics in history.items()],
-        label="Train Acc",
-    )
-    plt.plot(
-        [sum(metrics["val_acc"]) / len(metrics["val_acc"]) for _, metrics in history.items()],
-        label="Val Acc",
-    )
-    plt.title("Accuracy")
+    plt.plot(road_losses, label="Train Road Loss")
+    plt.plot(val_road_losses, label="Val Road Loss")
+    plt.ylim(np.min(road_losses) - 1, np.max(road_losses) + 1)
     plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
+    plt.ylabel("Road Loss")
+    plt.title("Road Loss")
     plt.legend()
     plt.savefig(f"{checkpoint_dir}/plots/history_acc.pdf")
     plt.close()
 
-    logging.info("Patch Acc history:")
-    for key, value in history.items():
-        metrics = value
-        logging.info(
-            f"\tEpoch {key}: Train Patch Acc: {sum(metrics['patch_acc']) / len(metrics['patch_acc']):.4f}, Val Patch Acc: {sum(metrics['val_patch_acc']) / len(metrics['val_patch_acc']):.4f}"
-        )
-    plt.plot(
-        [sum(metrics["patch_acc"]) / len(metrics["patch_acc"]) for _, metrics in history.items()],
-        label="Train Patch Acc",
-    )
-    plt.plot(
-        [
-            sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
-            for _, metrics in history.items()
-        ],
-        label="Val Patch Acc",
-    )
-    plt.title("Patch Accuracy")
+    plt.plot(angle_losses, label="Train Angle Loss")
+    plt.plot(val_angle_losses, label="Val Angle Loss")
+    plt.ylim(0, 8)
     plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
+    plt.ylabel("Angle Loss")
+    plt.title("Angle Loss")
+    plt.legend()
+    plt.savefig(f"{checkpoint_dir}/plots/history_angle_loss.pdf")
+    plt.close()
+
+    plt.plot(topo_losses, label="Train Topo Loss")
+    plt.plot(val_topo_losses, label="Val Topo Loss")
+    plt.ylim(0, 20)
+    plt.xlabel("Epoch")
+    plt.ylabel("Topo Loss")
+    plt.title("Topo Loss")
+    plt.legend()
+    plt.savefig(f"{checkpoint_dir}/plots/history_topo_loss.pdf")
+    plt.close()
+
+    plt.plot(accs, label="Train Acc")
+    plt.plot(val_accs, label="Val Acc")
+    plt.xlabel("Epoch")
+    plt.ylabel("Acc")
+    plt.title("Overall Accuracy")
+    plt.legend()
+    plt.savefig(f"{checkpoint_dir}/plots/history_acc.pdf")
+    plt.close()
+
+    plt.plot(patch_accs, label="Train Patch Acc")
+    plt.plot(val_patch_accs, label="Val Patch Acc")
+    plt.xlabel("Epoch")
+    plt.ylabel("Patch Acc")
+    plt.title("Patch Accuracy")
     plt.legend()
     plt.savefig(f"{checkpoint_dir}/plots/history_patch_acc.pdf")
     plt.close()
@@ -282,15 +308,59 @@ def main(args):
     total_end = timer()
     logging.info(f"Total time: {timedelta(seconds=total_end - total_start)}")
 
+    df_hist = []
+    for epoch in range(len(losses)):
+        df_hist.append(
+            (
+                losses[epoch],
+                val_losses[epoch],
+                road_losses[epoch],
+                val_road_losses[epoch],
+                angle_losses[epoch],
+                val_angle_losses[epoch],
+                topo_losses[epoch],
+                val_topo_losses[epoch],
+                accs[epoch],
+                val_accs[epoch],
+                patch_accs[epoch],
+                val_patch_accs[epoch],
+            )
+        )
+
+    df_hist = pd.DataFrame(
+        df_hist,
+        columns=[
+            "train_loss",
+            "val_loss",
+            "train_road_loss",
+            "val_road_loss",
+            "train_angle_loss",
+            "val_angle_loss",
+            "train_topo_loss",
+            "val_topo_loss",
+            "train_acc",
+            "val_acc",
+            "train_patch_acc",
+            "val_patch_acc",
+        ],
+    ).to_csv(f"{checkpoint_dir}/history.csv")
+
 
 if __name__ == "__main__":
     args = parse_arguments()
+
     # setup logging
-    timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    checkpoint_dir = f"./checkpoints/{args.model}_{timestamp}"
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+        os.makedirs(os.path.join(checkpoint_dir, "models"))
+        os.makedirs(os.path.join(checkpoint_dir, "plots"))
+
     logging.basicConfig(
         format="[%(asctime)s - %(levelname)s] %(message)s",
         level=logging.INFO,
-        # filename=f"./{args.log_dir}/{args.model}-{timestamp}.log",
+        filename=f"{checkpoint_dir}/log.txt",
     )
 
-    main(args)
+    main(checkpoint_dir, args)

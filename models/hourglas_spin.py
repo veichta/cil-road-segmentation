@@ -331,7 +331,7 @@ class HourglassNet(nn.Module):
         return out_1, out_2
 
 
-def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, args):
+def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, epoch, args):
     miou = loss_fn[0]
     ce = loss_fn[1]
     topo = loss_fn[2]
@@ -340,7 +340,21 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, ar
         loss1 = miou(pred_mask, label.to(args.device))
         loss2 = ce(pred_vec, vecmap_angles.to(args.device))
         loss = args.miou_weight * loss1 + args.ce_weight * loss2
-        return loss, loss1, loss2, 0
+
+        if args.topo_weight > 0:
+            loss3 = sum(
+                topo(
+                    F.softmax(pred_mask, dim=1)[batch_idx, 1, :, :],
+                    label[0][batch_idx].to(args.device),
+                    args.device,
+                )
+                for batch_idx in range(pred_mask.shape[0])
+            )
+            loss = loss + args.topo_weight * loss3
+
+            return loss, loss1, loss2, loss3
+
+        return loss, loss1, loss2, torch.tensor(0)
 
     loss1 = miou(pred_mask[0], label[0].to(args.device), False)
     for idx in range(num_stacks - 1):
@@ -360,41 +374,41 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, ar
 
     loss = args.weight_miou * loss1 + args.weight_vec * loss2
 
-    if args.weight_topo > 0:
+    if args.weight_topo > 0 and epoch > args.topo_after:
         # apply softmax over first dimension
         l3 = sum(
             topo(
-                F.softmax(pred_mask[0], dim=1)[batch_idx, 1, :, :],
-                label[0][batch_idx].to(args.device),
+                F.softmax(pred_mask[-1], dim=1)[batch_idx, 1, :, :],
+                label[-1][batch_idx].to(args.device),
                 args.device,
             )
             for batch_idx in range(pred_mask[-1].shape[0])
         )
 
-        l3 /= pred_mask[0].shape[0]
+        l3 /= pred_mask[-1].shape[0]
 
         loss3 = l3
 
-        for idx in range(num_stacks - 1):
-            l3 = sum(
-                topo(
-                    F.softmax(pred_mask[idx], dim=1)[batch_idx, 1, :, :],
-                    label[idx][batch_idx].to(args.device),
-                    args.device,
-                )
-                for batch_idx in range(pred_mask[-1].shape[0])
-            )
+        # for idx in range(num_stacks - 1):
+        #     l3 = sum(
+        #         topo(
+        #             F.softmax(pred_mask[idx], dim=1)[batch_idx, 1, :, :],
+        #             label[idx][batch_idx].to(args.device),
+        #             args.device,
+        #         )
+        #         for batch_idx in range(pred_mask[-1].shape[0])
+        #     )
 
-            l3 /= pred_mask[idx].shape[0]
-            loss3 += l3
+        #     l3 /= pred_mask[idx].shape[0]
+        #     loss3 += l3
 
-        loss3 = loss3 / num_stacks
+        # loss3 = loss3 / num_stacks
 
-        loss += args.weight_topo * loss3
+        loss = loss + args.weight_topo * loss3
 
         return loss, loss1, loss2, loss3
 
-    return loss, loss1, loss2, 0
+    return loss, loss1, loss2, torch.tensor(0)
 
 
 def train_one_epoch(
@@ -432,6 +446,7 @@ def train_one_epoch(
             x=inputsBGR,
             y=labels,
             y_vec=vecmap_angles,
+            epoch=epoch,
             args=args,
         )
 
@@ -449,7 +464,7 @@ def train_one_epoch(
     return metrics
 
 
-def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args):
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoch, args):
     # overall_start = timer()
     optimizer.zero_grad()
 
@@ -465,6 +480,7 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args
         pred_vec=pred_vec,
         label=y,
         vecmap_angles=y_vec,
+        epoch=epoch,
         args=args,
     )
     # loss_end = timer()
@@ -486,9 +502,9 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, args
     # logging.info(f"Optimizer time was {timedelta(seconds=opt_end - opt_start)}")
 
     metrics["loss"].append(loss.item())
-    metrics["road_loss"].append(road_loss)
-    metrics["angle_loss"].append(angle_loss)
-    metrics["topo_loss"].append(topo_loss)
+    metrics["road_loss"].append(road_loss.cpu().detach().numpy())
+    metrics["angle_loss"].append(angle_loss.cpu().detach().numpy())
+    metrics["topo_loss"].append(topo_loss.cpu().detach().numpy())
 
     # FIXME: fix metrics
     if args.multi_scale_pred:
@@ -516,6 +532,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
                 pred_vec=pred_vec,
                 label=y,
                 vecmap_angles=y_vec,
+                epoch=epoch,
                 args=args,
             )
 
@@ -537,9 +554,9 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
                 show = False
 
             metrics["val_loss"].append(loss.item())
-            metrics["val_road_loss"].append(road_loss)
-            metrics["val_angle_loss"].append(angle_loss)
-            metrics["val_topo_loss"].append(topo_loss)
+            metrics["val_road_loss"].append(road_loss.cpu().detach().numpy())
+            metrics["val_angle_loss"].append(angle_loss.cpu().detach().numpy())
+            metrics["val_topo_loss"].append(topo_loss.cpu().detach().numpy())
 
             for k, fn in metric_fns.items():
                 metrics[f"val_{k}"].append(

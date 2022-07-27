@@ -3,15 +3,16 @@ import numpy as np
 
 
 def denormalize_img(img):
-    channel_mean = [125.78279375, 130.15193705, 130.92051354]
-    channel_std = [52.71067801, 49.9758017, 48.39758796]
+    # channel_mean = [0.510, 0.521, 0.518]
+    # channel_std = [0.239, 0.218, 0.209]
 
-    img = np.array(img, dtype=np.float32)
-    for c in range(3):
-        img[:, :, c] = (img[:, :, c] * channel_std[c]) + channel_mean[c]
+    # img = np.array(img, dtype=np.float32)
+    # for c in range(3):
+    #     img[:, :, c] = (img[:, :, c] * channel_std[c]) + channel_mean[c]
 
-    # plt.imshow(np.array(img, dtype=np.uint8))
-    # plt.show()
+    # # plt.imshow(np.array(img, dtype=np.uint8))
+    # # plt.show()
+    img = img * 255.0
 
     return np.array(img, dtype=np.uint8)
 
