@@ -1,6 +1,7 @@
 import math
 
 import gudhi as gd
+import matplotlib.pyplot as plt
 import numpy
 import torch
 import torch.nn as nn
@@ -195,7 +196,7 @@ def getCriticalPoints(likelihood):
     return pd_lh, bcp_lh, dcp_lh, True
 
 
-def getTopoLoss(likelihood_tensor, gt_tensor, device, topo_size=200):
+def getTopoLoss(likelihood_tensor, gt_tensor, device, topo_size=100):
     """
     Calculate the topology loss of the predicted image and ground truth image
     Warning: To make sure the topology loss is able to back-propagation, likelihood
@@ -331,3 +332,120 @@ def getTopoLoss(likelihood_tensor, gt_tensor, device, topo_size=200):
 
     # Measuring the MSE loss between predicted critical points and reference critical points
     return (((likelihood_tensor * topo_cp_weight_map) - topo_cp_ref_map) ** 2).sum()
+
+
+################################################################################################
+import torch.nn.functional as F
+
+
+def one_hot(x, device=None, dtype=None):
+    oh0 = torch.zeros_like(x, dtype=dtype, device=device)
+    oh1 = torch.zeros_like(x, dtype=dtype, device=device)
+
+    oh0[x == 0] = 1
+    oh1[x == 1] = 1
+
+    return torch.stack([oh0, oh1], dim=1)
+
+
+class DiceLoss(nn.Module):
+    """
+    Shape:
+        - Input: :math:`(N, C, H, W)` where C = number of classes.
+        - Target: :math:`(N, H, W)` where each value is
+          :math:`0 ≤ targets[i] ≤ C−1`.
+    """
+
+    def __init__(self) -> None:
+        super(DiceLoss, self).__init__()
+        self.eps: float = 1e-6
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if not torch.is_tensor(input):
+            raise TypeError(f"Input type is not a torch.Tensor. Got {type(input)}")
+
+        if len(input.shape) != 4:
+            input = one_hot(input)
+
+        if len(input.shape) != 4:
+            raise ValueError(f"Invalid input shape, we expect BxNxHxW. Got: {input.shape}")
+        if input.shape[-2:] != target.shape[-2:]:
+            raise ValueError(
+                f"input and target shapes must be the same. Got: {input.shape}, {target.shape}"
+            )
+
+        if input.device != target.device:
+            raise ValueError(f"input and target must be in the same device. Got: {input.device}")
+
+        # compute softmax over the classes axis
+        input_soft = F.softmax(input, dim=1)
+
+        # create the labels one hot tensor
+        target_one_hot = one_hot(target, device=input.device, dtype=input.dtype)
+
+        # compute the actual dice score
+        dims = (1, 2, 3)
+        intersection = torch.sum(input_soft * target_one_hot, dims)
+        cardinality = torch.sum(input_soft + target_one_hot, dims)
+
+        dice_score = 2.0 * intersection / (cardinality + self.eps)
+        return torch.mean(1.0 - dice_score)
+
+
+def dice_loss(input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if len(input.shape) == 4:
+        return DiceLoss()(input, target)
+
+    t0 = 1 - input
+    t1 = input
+    input = torch.stack([t0, t1], dim=1)
+    return DiceLoss()(input, target)
+
+
+def focal_loss(input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if len(input.shape) != 4:
+        return sigmoid_focal_loss(input.sigmoid().float(), target)
+
+    return sigmoid_focal_loss(input.softmax(dim=1)[:, 1, :, :].float(), target)
+
+
+def sigmoid_focal_loss(
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2,
+    reduction: str = "mean",
+):
+    """
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples or -1 for ignore. Default = 0.25
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+        reduction: 'none' | 'mean' | 'sum'
+                 'none': No reduction will be applied to the output.
+                 'mean': The output will be averaged.
+                 'sum': The output will be summed.
+    Returns:
+        Loss tensor with the reduction option applied.
+    """
+    p = inputs
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = p * targets + (1 - p) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    if reduction == "mean":
+        loss = loss.mean()
+    elif reduction == "sum":
+        loss = loss.sum()
+
+    return loss.float()

@@ -1,14 +1,13 @@
-import logging
 import math
 import os
-from datetime import timedelta
-from timeit import default_timer as timer
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
-from utils.evaluate_utils import plot_predictions
+from utils.evaluate_utils import log_metrics, plot_predictions
 
 from models.spin import spin
 
@@ -303,7 +302,7 @@ class HourglassNet(nn.Module):
         # Final Classifications
         d1 = self.decoder1(y1)[
             :, :, : int(math.ceil(rows / 2.0)), : int(math.ceil(cols / 2.0))
-        ]  # d1 = 128, 128,128
+        ]  # d1 = 128, 128, 128
         d1_score = self.decoder1_score(d1)
         out_1.append(d1_score)
         f1 = self.finaldeconv1(d1)
@@ -335,9 +334,11 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, ep
     miou = loss_fn[0]
     ce = loss_fn[1]
     topo = loss_fn[2]
+    dice_loss = loss_fn[3]
+    focal_loss = loss_fn[4]
 
     if not args.multi_scale_pred:
-        loss1 = miou(pred_mask, label.to(args.device))
+        loss1 = 1 + miou(pred_mask, label.to(args.device))
         loss2 = ce(pred_vec, vecmap_angles.to(args.device))
         loss = args.miou_weight * loss1 + args.ce_weight * loss2
 
@@ -354,61 +355,58 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, ep
 
             return loss, loss1, loss2, loss3
 
-        return loss, loss1, loss2, torch.tensor(0)
+        return loss, [loss1, loss2, torch.tensor(0), torch.tensor(0), torch.tensor(0)]
 
-    loss1 = miou(pred_mask[0], label[0].to(args.device), False)
+    loss1 = 1 + miou(pred_mask[0], label[0].to(args.device), False)
     for idx in range(num_stacks - 1):
-        loss1 += miou(pred_mask[idx + 1], label[0].to(args.device), False)
+        loss1 += 1 + miou(pred_mask[idx + 1], label[idx].to(args.device), False)
+    loss1 = loss1 / num_stacks
 
-    for idx, output in enumerate(pred_mask[-2:]):
-        loss1 += miou(output, label[idx + 1].to(args.device), False)
+    loss1 += 1 + miou(pred_mask[-1], label[-1].to(args.device), False)
 
     loss2 = ce(pred_vec[0], vecmap_angles[0].to(args.device))
     for idx in range(num_stacks - 1):
-        loss2 += ce(pred_vec[idx + 1], vecmap_angles[0].to(args.device))
-    for idx, pred_vecmap in enumerate(pred_vec[-2:]):
-        loss2 += ce(pred_vecmap, vecmap_angles[idx + 1].to(args.device))
-
-    loss1 = loss1 / num_stacks
+        loss2 += ce(pred_vec[idx + 1], vecmap_angles[idx].to(args.device))
     loss2 = loss2 / num_stacks
 
-    loss = args.weight_miou * loss1 + args.weight_vec * loss2
+    loss2 += ce(pred_vec[-1], vecmap_angles[-1].to(args.device))
+
+    bce = nn.BCELoss()
+    lbce = bce(pred_mask[0].softmax(dim=1)[:, 1, :, :], label[0].to(args.device))
+    for idx in range(num_stacks - 1):
+        lbce += bce(pred_mask[idx + 1].softmax(dim=1)[:, 1, :, :], label[idx].to(args.device))
+    lbce = lbce / num_stacks
+    lbce += bce(pred_mask[-1].softmax(dim=1)[:, 1, :, :], label[-1].to(args.device))
+
+    dice_l = dice_loss(pred_mask[0], label[0].to(args.device))
+    for idx in range(num_stacks - 1):
+        dice_l += dice_loss(pred_mask[idx + 1], label[idx].to(args.device))
+    dice_l = dice_l / num_stacks
+    dice_l += dice_loss(pred_mask[-1], label[-1].to(args.device))
+
+    focal_l = focal_loss(pred_mask[0], label[0].to(args.device))
+    for idx in range(num_stacks - 1):
+        focal_l += focal_loss(pred_mask[idx + 1], label[idx].to(args.device))
+    focal_l = focal_l / num_stacks
+    focal_l += focal_loss(pred_mask[-1], label[-1].to(args.device))
+
+    loss = (
+        args.weight_miou * loss1
+        + args.weight_vec * loss2
+        + lbce * args.weight_bce
+        + dice_l * args.weight_dice
+        + focal_l * args.weight_focal
+    )
 
     if args.weight_topo > 0 and epoch > args.topo_after:
-        # apply softmax over first dimension
-        l3 = sum(
-            topo(
-                F.softmax(pred_mask[-1], dim=1)[batch_idx, 1, :, :],
-                label[-1][batch_idx].to(args.device),
-                args.device,
-            )
-            for batch_idx in range(pred_mask[-1].shape[0])
+        loss3 = topo(
+            torch.stack([1 - label[-1], label[-1]], dim=1).to(args.device),
+            pred_mask[-1].softmax(dim=1),
         )
 
-        l3 /= pred_mask[-1].shape[0]
+        return loss, [loss1, loss2, loss3, lbce, dice_l, focal_l]
 
-        loss3 = l3
-
-        # for idx in range(num_stacks - 1):
-        #     l3 = sum(
-        #         topo(
-        #             F.softmax(pred_mask[idx], dim=1)[batch_idx, 1, :, :],
-        #             label[idx][batch_idx].to(args.device),
-        #             args.device,
-        #         )
-        #         for batch_idx in range(pred_mask[-1].shape[0])
-        #     )
-
-        #     l3 /= pred_mask[idx].shape[0]
-        #     loss3 += l3
-
-        # loss3 = loss3 / num_stacks
-
-        loss = loss + args.weight_topo * loss3
-
-        return loss, loss1, loss2, loss3
-
-    return loss, loss1, loss2, torch.tensor(0)
+    return loss, [loss1, loss2, torch.tensor(0), lbce, dice_l, focal_l]
 
 
 def train_one_epoch(
@@ -423,20 +421,22 @@ def train_one_epoch(
         "val_angle_loss": [],
         "topo_loss": [],
         "val_topo_loss": [],
+        "bce_loss": [],
+        "val_bce_loss": [],
+        "dice_loss": [],
+        "val_dice_loss": [],
+        "focal_loss": [],
+        "val_focal_loss": [],
     }
     for k in list(metric_fns):
         metrics[k] = []
         metrics[f"val_{k}"] = []
 
-    # pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.num_epochs}")
-    # pbar.set_postfix({k: 0 for k in metrics})
-
     model.train()
     for (inputsBGR, labels, vecmap_angles) in tqdm(train_loader):
-        # if len(metrics["loss"]) > 0:
-        #     continue
-
         inputsBGR = inputsBGR.to(args.device)
+
+        # for _ in range(100):
         metrics = train_step(
             model=model,
             loss_fn=criterion,
@@ -452,28 +452,15 @@ def train_one_epoch(
 
     lr_scheduler.step()
 
-    logging.info(f"\tTrain Loss: {sum(metrics['loss']) / len(metrics['loss']):.4f}")
-    logging.info(f"\tTrain Road Loss: {sum(metrics['road_loss']) / len(metrics['road_loss']):.4f}")
-    logging.info(
-        f"\tTrain Angle Loss: {sum(metrics['angle_loss']) / len(metrics['angle_loss']):.4f}"
-    )
-    logging.info(f"\tTrain Topo Loss: {sum(metrics['topo_loss']) / len(metrics['topo_loss']):.4f}")
-    for k in list(metric_fns):
-        logging.info(f"\tTrain {k}: {sum(metrics[k]) / len(metrics[k]):.4f}")
-
     return metrics
 
 
 def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoch, args):
-    # overall_start = timer()
     optimizer.zero_grad()
 
-    # forward_start = timer()
     pred_mask, pred_vec = model(x)
-    # forward_end = timer()
 
-    # loss_start = timer()
-    loss, road_loss, angle_loss, topo_loss = criterion(
+    loss, losses = criterion(
         num_stacks=model.num_stacks,
         loss_fn=loss_fn,
         pred_mask=pred_mask,
@@ -483,30 +470,18 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoc
         epoch=epoch,
         args=args,
     )
-    # loss_end = timer()
 
-    # back_start = timer()
     loss.backward()
-    # back_end = timer()
-
-    # opt_start = timer()
     optimizer.step()
-    # opt_end = timer()
-
-    # overall_end = timer()
-
-    # logging.info(f"Overall batch time was {timedelta(seconds=overall_end - overall_start)}")
-    # logging.info(f"Forward time was {timedelta(seconds=forward_end - forward_start)}")
-    # logging.info(f"Loss time was {timedelta(seconds=loss_end - loss_start)}")
-    # logging.info(f"Backward time was {timedelta(seconds=back_end - back_start)}")
-    # logging.info(f"Optimizer time was {timedelta(seconds=opt_end - opt_start)}")
 
     metrics["loss"].append(loss.item())
-    metrics["road_loss"].append(road_loss.cpu().detach().numpy())
-    metrics["angle_loss"].append(angle_loss.cpu().detach().numpy())
-    metrics["topo_loss"].append(topo_loss.cpu().detach().numpy())
+    metrics["road_loss"].append(losses[0].cpu().detach().numpy())
+    metrics["angle_loss"].append(losses[1].cpu().detach().numpy())
+    metrics["topo_loss"].append(losses[2].cpu().detach().numpy())
+    metrics["bce_loss"].append(losses[3].cpu().detach().numpy())
+    metrics["dice_loss"].append(losses[4].cpu().detach().numpy())
+    metrics["focal_loss"].append(losses[5].cpu().detach().numpy())
 
-    # FIXME: fix metrics
     if args.multi_scale_pred:
         pred_mask = pred_mask[-1]
         y = y[-1]
@@ -525,7 +500,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
             inputsBGR = inputsBGR.to(device=args.device)
             pred_mask, pred_vec = model(inputsBGR)  # forward pass
 
-            loss, road_loss, angle_loss, topo_loss = criterion(
+            loss, losses = criterion(
                 num_stacks=model.num_stacks,
                 loss_fn=loss_fn,
                 pred_mask=pred_mask,
@@ -554,27 +529,18 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
                 show = False
 
             metrics["val_loss"].append(loss.item())
-            metrics["val_road_loss"].append(road_loss.cpu().detach().numpy())
-            metrics["val_angle_loss"].append(angle_loss.cpu().detach().numpy())
-            metrics["val_topo_loss"].append(topo_loss.cpu().detach().numpy())
+            metrics["val_road_loss"].append(losses[0].cpu().detach().numpy())
+            metrics["val_angle_loss"].append(losses[1].cpu().detach().numpy())
+            metrics["val_topo_loss"].append(losses[2].cpu().detach().numpy())
+            metrics["val_bce_loss"].append(losses[3].cpu().detach().numpy())
+            metrics["val_dice_loss"].append(losses[4].cpu().detach().numpy())
+            metrics["val_focal_loss"].append(losses[5].cpu().detach().numpy())
 
             for k, fn in metric_fns.items():
                 metrics[f"val_{k}"].append(
                     fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device)).item()
                 )
 
-            # summarize metrics, log to tensorboard and display
-    logging.info(f"\tValidation Loss: {sum(metrics['val_loss']) / len(metrics['val_loss']):.4f}")
-    logging.info(
-        f"\tValidation Road Loss: {sum(metrics['val_road_loss']) / len(metrics['val_road_loss']):.4f}"
-    )
-    logging.info(
-        f"\tValidation Angle Loss: {sum(metrics['val_angle_loss']) / len(metrics['val_angle_loss']):.4f}"
-    )
-    logging.info(
-        f"\tValidation Topo Loss: {sum(metrics['val_topo_loss']) / len(metrics['val_topo_loss']):.4f}"
-    )
-    for k in list(metric_fns):
-        logging.info(f'\tValidation {k}: {sum(metrics[f"val_{k}"]) / len(metrics[f"val_{k}"]):.4f}')
+    log_metrics(metrics)
 
     return metrics

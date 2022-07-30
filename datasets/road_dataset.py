@@ -5,6 +5,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from PIL import Image
 from torchvision import transforms
 from tqdm import tqdm
 from utils import affinity_utils
@@ -23,17 +24,11 @@ class RoadDataset(torch.utils.data.Dataset):
         self.crop_size = [target_size[0], target_size[1]]
         self.multi_scale_pred = multi_scale_pred
 
-        self.channel_mean = [125.78279375, 130.15193705, 130.92051354]
-        self.channel_std = [52.71067801, 49.9758017, 48.39758796]
-
         self.augment = torch.nn.Sequential(
             transforms.RandomAdjustSharpness(3),
             transforms.GaussianBlur(3),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.001),
-            transforms.RandomErasing(p=0.5, scale=(0.1, 0.1), ratio=(0.3, 3.3)),
-        )
-        self.normalize = torch.nn.Sequential(
-            transforms.Normalize(mean=[0.510, 0.521, 0.518], std=[0.239, 0.218, 0.209])
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1, hue=0.0),
+            transforms.RandomErasing(p=0.5, scale=(0.02, 0.1), ratio=(0.3, 3.3)),
         )
 
         # preprocess
@@ -80,13 +75,15 @@ class RoadDataset(torch.utils.data.Dataset):
             image = cv2.warpAffine(image, M, (w, h))
             gt = cv2.warpAffine(gt, M, (w, h))
 
-        # image = image / 255.0
         image = torch.tensor(image, dtype=torch.float32)
         image = image.permute(2, 0, 1) / 255.0
         if self.augmentation:
             image = self.augment(image)
 
-        # image = self.normalize(image)
+            # if index == 0:
+            #     Image.fromarray((image.permute(1, 2, 0).numpy() * 255).astype(np.uint8)).save(
+            #         "./checkpoints/augmented.png"
+            #     )
 
         return image, gt
 

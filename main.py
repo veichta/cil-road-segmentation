@@ -4,14 +4,14 @@ import time
 from datetime import timedelta
 from timeit import default_timer as timer
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from torch import nn
-from torchsummary import summary
 
-from models.base_unet import accuracy_fn, patch_accuracy_fn
+from utils.evaluate_utils import save_and_plot_history
+from utils.loss import CrossEntropyLoss2d, dice_loss, focal_loss, getTopoLoss, mIoULoss
+from utils.metrics import accuracy_fn, patch_accuracy_fn
+from utils.topo_loss import soft_cldice
 from utils.utils import parse_arguments
 
 
@@ -33,6 +33,14 @@ def load_data_info_with_split(args):
             row["split"] = "val"
             cil_data_info.loc[idx] = row
 
+    if args.datasets == "dg":
+        dg_data_info = dataset_info[dataset_info["dataset"] == "DeepGlobe"]
+        # set splits for CIL dataset
+        for idx, row in dg_data_info.iterrows():
+            if np.random.rand() <= args.val_split:
+                row["split"] = "val"
+                dg_data_info.loc[idx] = row
+
     if args.datasets == "all":
         dataset_info[dataset_info["dataset"] == "CIL"] = cil_data_info
     elif args.datasets == "cil":
@@ -43,6 +51,8 @@ def load_data_info_with_split(args):
     elif args.datasets == "cil-dg":
         dataset_info[dataset_info["dataset"] == "CIL"] = cil_data_info
         dataset_info = dataset_info[dataset_info["dataset"] != "MRD"]
+    elif args.datasets == "dg":
+        dataset_info = dg_data_info
     else:
         raise ValueError(f"Unknown dataset: {args.datasets}")
 
@@ -90,31 +100,24 @@ def main(checkpoint_dir, args):
 
         # create train and val datasets
         train_dataset = BaseDataset(
-            dataframe=train_df, use_patches=False, target_size=(384, 384), args=args
+            dataframe=train_df, use_patches=False, target_size=(400, 400), is_train=True, args=args
         )
         val_dataset = BaseDataset(
-            dataframe=val_df, use_patches=False, target_size=(384, 384), args=args
+            dataframe=val_df, use_patches=False, target_size=(400, 400), is_train=False, args=args
         )
 
-        # create model
         model = UNet().to(args.device)
-        # summary(model, input_size=(args.batch_size, 384, 384))
-
-        loss_fn = nn.MSELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     elif args.model == "spin":
         logging.info("Using Spin Model.")
         from datasets import road_dataset
         from models.hourglas_spin import HourglassNet, evaluate_model, train_one_epoch
-        from utils.loss import CrossEntropyLoss2d, getTopoLoss, mIoULoss
         from utils.utils import weights_init
 
         target_size = (400, 400)
 
         model = HourglassNet().to(args.device)
         weights_init(model, args.seed)
-        # summary(model, input_size=(3, target_size[0], target_size[1]))
 
         train_dataset = road_dataset.RoadDataset(
             dataframe=train_df,
@@ -131,33 +134,35 @@ def main(checkpoint_dir, args):
             args=args,
         )
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        # multi step lr scheduler
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=[120, 150, 180],
-            gamma=0.1,
-        )
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-        weights_angles = torch.ones(37).to(args.device)
-        angle_loss = CrossEntropyLoss2d(
-            weight=weights_angles, size_average=True, ignore_index=255, reduce=True
-        ).to(args.device)
+    # multi step lr scheduler
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=[120, 150, 180],
+        gamma=0.1,
+    )
 
-        weights = torch.ones(2).to(args.device)
-        road_loss = mIoULoss(weight=weights, n_classes=2).to(args.device)
+    weights_angles = torch.ones(37).to(args.device)
+    angle_loss = CrossEntropyLoss2d(
+        weight=weights_angles, size_average=True, ignore_index=255, reduce=True
+    ).to(args.device)
 
-        loss_fn = [road_loss, angle_loss, getTopoLoss]
+    weights = torch.ones(2).to(args.device)
+    road_loss = mIoULoss(weight=weights, n_classes=2).to(args.device)
+
+    loss_fn = [road_loss, angle_loss, soft_cldice(iter_=20), dice_loss, focal_loss]
 
     if args.resume:
         model.load_state_dict(torch.load(args.resume, map_location=args.device))
-        # optimizer.load_state_dict(torch.load(args.resume, map_location=args.device))
+        for _ in range(args.start_epoch):
+            lr_scheduler.step()
 
     # create dataloaders
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=args.num_workers,
     )
     val_loader = torch.utils.data.DataLoader(
@@ -204,146 +209,18 @@ def main(checkpoint_dir, args):
             best_acc = score
             torch.save(model.state_dict(), f"{checkpoint_dir}/models/best_model.pth")
 
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 20 == 0 and epoch >= 100:
             torch.save(model.state_dict(), f"{checkpoint_dir}/models/model_{epoch + 1}.pth")
 
         end = timer()
         logging.info(f"\tEpoch {epoch + 1} took {timedelta(seconds=end - start)}")
 
     logging.info("--------- Training finished. ---------")
+    logging.info(f"Best model has {best_acc:.4f} patch accuracy.")
 
-    losses = [sum(metrics["loss"]) / len(metrics["loss"]) for _, metrics in history.items()]
-    val_losses = [
-        sum(metrics["val_loss"]) / len(metrics["val_loss"]) for _, metrics in history.items()
-    ]
-    road_losses = [
-        sum(metrics["road_loss"]) / len(metrics["road_loss"]) for _, metrics in history.items()
-    ]
-    val_road_losses = [
-        sum(metrics["val_road_loss"]) / len(metrics["val_road_loss"])
-        for _, metrics in history.items()
-    ]
-    angle_losses = [
-        sum(metrics["angle_loss"]) / len(metrics["angle_loss"]) for _, metrics in history.items()
-    ]
-    val_angle_losses = [
-        sum(metrics["val_angle_loss"]) / len(metrics["val_angle_loss"])
-        for _, metrics in history.items()
-    ]
-    topo_losses = [
-        sum(metrics["topo_loss"]) / len(metrics["topo_loss"]) for _, metrics in history.items()
-    ]
-    val_topo_losses = [
-        sum(metrics["val_topo_loss"]) / len(metrics["val_topo_loss"])
-        for _, metrics in history.items()
-    ]
-    accs = [sum(metrics["acc"]) / len(metrics["acc"]) for _, metrics in history.items()]
-    val_accs = [sum(metrics["val_acc"]) / len(metrics["val_acc"]) for _, metrics in history.items()]
-    patch_accs = [
-        sum(metrics["patch_acc"]) / len(metrics["patch_acc"]) for _, metrics in history.items()
-    ]
-    val_patch_accs = [
-        sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
-        for _, metrics in history.items()
-    ]
-
-    plt.plot(losses, label="Train Loss")
-    plt.plot(val_losses, label="Val Loss")
-    plt.ylim(-4, 4)
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Overall Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_loss.pdf")
-    plt.close()
-
-    plt.plot(road_losses, label="Train Road Loss")
-    plt.plot(val_road_losses, label="Val Road Loss")
-    plt.ylim(np.min(road_losses) - 1, np.max(road_losses) + 1)
-    plt.xlabel("Epoch")
-    plt.ylabel("Road Loss")
-    plt.title("Road Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_acc.pdf")
-    plt.close()
-
-    plt.plot(angle_losses, label="Train Angle Loss")
-    plt.plot(val_angle_losses, label="Val Angle Loss")
-    plt.ylim(0, 8)
-    plt.xlabel("Epoch")
-    plt.ylabel("Angle Loss")
-    plt.title("Angle Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_angle_loss.pdf")
-    plt.close()
-
-    plt.plot(topo_losses, label="Train Topo Loss")
-    plt.plot(val_topo_losses, label="Val Topo Loss")
-    plt.ylim(0, 20)
-    plt.xlabel("Epoch")
-    plt.ylabel("Topo Loss")
-    plt.title("Topo Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_topo_loss.pdf")
-    plt.close()
-
-    plt.plot(accs, label="Train Acc")
-    plt.plot(val_accs, label="Val Acc")
-    plt.xlabel("Epoch")
-    plt.ylabel("Acc")
-    plt.title("Overall Accuracy")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_acc.pdf")
-    plt.close()
-
-    plt.plot(patch_accs, label="Train Patch Acc")
-    plt.plot(val_patch_accs, label="Val Patch Acc")
-    plt.xlabel("Epoch")
-    plt.ylabel("Patch Acc")
-    plt.title("Patch Accuracy")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_patch_acc.pdf")
-    plt.close()
-
+    save_and_plot_history(checkpoint_dir, total_start, history)
     total_end = timer()
     logging.info(f"Total time: {timedelta(seconds=total_end - total_start)}")
-
-    df_hist = []
-    for epoch in range(len(losses)):
-        df_hist.append(
-            (
-                losses[epoch],
-                val_losses[epoch],
-                road_losses[epoch],
-                val_road_losses[epoch],
-                angle_losses[epoch],
-                val_angle_losses[epoch],
-                topo_losses[epoch],
-                val_topo_losses[epoch],
-                accs[epoch],
-                val_accs[epoch],
-                patch_accs[epoch],
-                val_patch_accs[epoch],
-            )
-        )
-
-    df_hist = pd.DataFrame(
-        df_hist,
-        columns=[
-            "train_loss",
-            "val_loss",
-            "train_road_loss",
-            "val_road_loss",
-            "train_angle_loss",
-            "val_angle_loss",
-            "train_topo_loss",
-            "val_topo_loss",
-            "train_acc",
-            "val_acc",
-            "train_patch_acc",
-            "val_patch_acc",
-        ],
-    ).to_csv(f"{checkpoint_dir}/history.csv")
 
 
 if __name__ == "__main__":

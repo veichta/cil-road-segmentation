@@ -1,7 +1,13 @@
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
-from PIL import Image
+import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
+from utils.evaluate_utils import log_metrics, plot_predictions
+from utils.loss import one_hot
 
 PATCH_SIZE = 16  # pixels per side of square patches
 VAL_SIZE = 10  # size of the validation set (number of images)
@@ -44,7 +50,7 @@ class UNet(nn.Module):
             [Block(in_ch, out_ch) for in_ch, out_ch in zip(dec_chs[:-1], dec_chs[1:])]
         )  # decoder blocks
         self.head = nn.Sequential(
-            nn.Conv2d(dec_chs[-1], 1, 1), nn.Sigmoid()
+            nn.Conv2d(dec_chs[-1], 1, 1),  # output is a single channel
         )  # 1x1 convolution for producing the output
 
     def forward(self, x):
@@ -63,75 +69,165 @@ class UNet(nn.Module):
         return self.head(x).squeeze(1)  # reduce to 1 channel
 
 
-def patch_accuracy_fn(y_hat, y):
-    # computes accuracy weighted by patches (metric used on Kaggle for evaluation)
-    h_patches = y.shape[-2] // PATCH_SIZE
-    w_patches = y.shape[-1] // PATCH_SIZE
-    patches_hat = (
-        y_hat.reshape(-1, 1, h_patches, PATCH_SIZE, w_patches, PATCH_SIZE).mean((-1, -3)) > CUTOFF
-    )
-    patches = y.reshape(-1, 1, h_patches, PATCH_SIZE, w_patches, PATCH_SIZE).mean((-1, -3)) > CUTOFF
-    return (patches == patches_hat).float().mean()
+def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, epoch, args):
+    miou = loss_fn[0]
+    ce = loss_fn[1]
+    topo = loss_fn[2]
+    dice_loss = loss_fn[3]
+    focal_loss = loss_fn[4]
+
+    dice_l = dice_loss(pred_mask.sigmoid(), label.to(args.device))
+    focal_l = focal_loss(pred_mask.sigmoid(), label.to(args.device))
+
+    lbce = torch.nn.BCELoss()(pred_mask.sigmoid(), label.to(args.device))
+
+    loss = lbce * args.weight_bce + dice_l * args.weight_dice + focal_l * args.weight_focal
+    if args.weight_topo and epoch > args.topo_after:
+        topo_l = topo(pred_mask, label, vecmap_angles)
+        loss += topo_l * args.weight_topo
+
+        return loss, [torch.tensor(0), torch.tensor(0), topo_l, lbce, dice_l, focal_l]
+
+    return loss, [torch.tensor(0), torch.tensor(0), torch.tensor(0), lbce, dice_l, focal_l]
 
 
-def accuracy_fn(y_hat, y):
-    # computes classification accuracy
-    return (y_hat.round() == y.round()).float().mean()
-
-
-def train_one_epoch(train_loader, model, criterion, optimizer, metrics, epoch, args):
-    metrics = {"loss": [], "val_loss": []}
-    for k in metrics:
+def train_one_epoch(
+    train_loader, model, criterion, optimizer, lr_scheduler, metric_fns, epoch, args
+):
+    metrics = {
+        "loss": [],
+        "val_loss": [],
+        "road_loss": [],
+        "val_road_loss": [],
+        "angle_loss": [],
+        "val_angle_loss": [],
+        "topo_loss": [],
+        "val_topo_loss": [],
+        "mse_loss": [],
+        "val_mse_loss": [],
+        "dice_loss": [],
+        "val_dice_loss": [],
+        "focal_loss": [],
+        "val_focal_loss": [],
+    }
+    for k in list(metric_fns):
         metrics[k] = []
-        metrics["val_" + k] = []
-
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.num_epochs}")
-    pbar.set_postfix({k: 0 for k in metrics})
+        metrics[f"val_{k}"] = []
 
     model.train()
-    for (x, y) in pbar:
-        x = x.to(args.device)
-        y = y.to(args.device)
+    # show = True
+    for (img, mask) in tqdm(train_loader):
+        # if len(metrics["loss"]) > 0:
+        #     continue
 
-        train_step(model, criterion, optimizer, metrics, metrics, x, y, args)
+        img = img.to(args.device)
 
-        pbar.set_postfix({k: sum(v) / len(v) for k, v in metrics.items() if len(v) > 0})
+        metrics = train_step(
+            model=model,
+            loss_fn=criterion,
+            optimizer=optimizer,
+            metric_fns=metric_fns,
+            metrics=metrics,
+            x=img,
+            y=mask,
+            y_vec=None,
+            epoch=epoch,
+            args=args,
+        )
+
+        # if show:
+        #     pm = model(img)
+        #     fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+        #     ax[0].imshow(pm[0].sigmoid().detach().cpu().numpy() * 255)
+        #     ax[1].imshow(mask[0].detach().cpu().numpy() * 255)
+        #     plt.savefig("./checkpoints/pred.png")
+        #     show = False
+
+        # break
+
+    lr_scheduler.step()
 
     return metrics
 
 
-def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, args):
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoch, args):
+    optimizer.zero_grad()
 
-    optimizer.zero_grad()  # zero out gradients
-    y_hat = model(x)  # forward pass
+    pred_mask = model(x)
 
-    loss = loss_fn(y, y_hat)  # compute loss
-    loss.backward()  # backward pass
+    loss, losses = criterion(
+        num_stacks=0,
+        loss_fn=loss_fn,
+        pred_mask=pred_mask,
+        pred_vec=None,
+        label=y,
+        vecmap_angles=y_vec,
+        epoch=epoch,
+        args=args,
+    )
 
-    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-    optimizer.step()  # optimize weights
+    loss.backward()
+    optimizer.step()
 
-    # log partial metrics
     metrics["loss"].append(loss.item())
-    for k, fn in metric_fns.items():
-        metrics[k].append(fn(y_hat, y).item())
+    metrics["road_loss"].append(losses[0].cpu().detach().numpy())
+    metrics["angle_loss"].append(losses[1].cpu().detach().numpy())
+    metrics["topo_loss"].append(losses[2].cpu().detach().numpy())
+    metrics["mse_loss"].append(losses[3].cpu().detach().numpy())
+    metrics["dice_loss"].append(losses[4].cpu().detach().numpy())
+    metrics["focal_loss"].append(losses[5].cpu().detach().numpy())
+
+    for k, fn in metric_fns.items():  # TODO: make pred 0, 1
+        metrics[k].append(fn(pred_mask.sigmoid(), y.to(device=args.device)).cpu())
+
+    return metrics
 
 
-def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, args):
+def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, checkpoint_path, args):
     model.eval()
     with torch.no_grad():  # do not keep track of gradients
-        for (x, y) in tqdm(val_loader):
-            x = x.to(args.device)
-            y = y.to(args.device)
+        show = True
+        for (img, mask) in tqdm(val_loader):
+            img = img.to(device=args.device)
+            pred_mask = model(img)  # forward pass
 
-            y_hat = model(x)  # forward pass
+            loss, losses = criterion(
+                num_stacks=0,
+                loss_fn=loss_fn,
+                pred_mask=pred_mask,
+                pred_vec=None,
+                label=mask,
+                vecmap_angles=None,
+                epoch=epoch,
+                args=args,
+            )
 
-            loss = loss_fn(y, y_hat)
+            if show and (epoch + 1) % 1 == 0:
+                n = 5
 
-            # log partial metrics
+                plot_predictions(
+                    img[:n],
+                    mask[:n],
+                    pred_mask[:n],
+                    os.path.join(checkpoint_path, "plots", f"predictions_{epoch + 1}.pdf"),
+                    epoch,
+                )
+                show = False
+
             metrics["val_loss"].append(loss.item())
-            for k, fn in metric_fns.items():
-                metrics[f"val_{k}"].append(fn(y_hat, y).item())
+            metrics["val_road_loss"].append(losses[0].cpu().detach().numpy())
+            metrics["val_angle_loss"].append(losses[1].cpu().detach().numpy())
+            metrics["val_topo_loss"].append(losses[2].cpu().detach().numpy())
+            metrics["val_mse_loss"].append(losses[3].cpu().detach().numpy())
+            metrics["val_dice_loss"].append(losses[4].cpu().detach().numpy())
+            metrics["val_focal_loss"].append(losses[5].cpu().detach().numpy())
 
-            # summarize metrics, log to tensorboard and display
+            for k, fn in metric_fns.items():
+                metrics[f"val_{k}"].append(
+                    fn(pred_mask.sigmoid(), mask.to(device=args.device)).cpu()
+                )
+            # break
+
+    log_metrics(metrics)
+
     return metrics

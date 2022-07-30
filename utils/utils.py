@@ -72,6 +72,18 @@ def parse_arguments():
         type=float, default=0, help="Weight for topo loss"
     )
     parser.add_argument(
+        "--weight_bce",
+        type=float, default=0, help="Weight for topo loss"
+    )
+    parser.add_argument(
+        "--weight_dice",
+        type=float, default=0, help="Weight for topo loss"
+    )
+    parser.add_argument(
+        "--weight_focal",
+        type=float, default=0, help="Weight for topo loss"
+    )
+    parser.add_argument(
         "--topo_after",
         type=int, default=50, help="Add topo weight after epoch"
     )
@@ -84,7 +96,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--datasets",
-        type=str, choices=["all", "cil", "cil-mrd", "cil-dg"], default="all", help="Datasets to use"
+        type=str, choices=["all", "cil", "cil-mrd", "cil-dg", "dg"], default="all", help="Datasets to use"
     )
     parser.add_argument(
         "--min_pixels",
