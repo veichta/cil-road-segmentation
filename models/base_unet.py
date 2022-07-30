@@ -1,13 +1,9 @@
 import os
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
-import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
 from utils.evaluate_utils import log_metrics, plot_predictions
-from utils.loss import one_hot
 
 PATCH_SIZE = 16  # pixels per side of square patches
 VAL_SIZE = 10  # size of the validation set (number of images)
@@ -69,26 +65,25 @@ class UNet(nn.Module):
         return self.head(x).squeeze(1)  # reduce to 1 channel
 
 
-def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, epoch, args):
-    miou = loss_fn[0]
-    ce = loss_fn[1]
-    topo = loss_fn[2]
-    dice_loss = loss_fn[3]
-    focal_loss = loss_fn[4]
+def criterion(loss_fn, pred_mask, mask, args):
+    miou_func = loss_fn[0]
+    vec_func = loss_fn[1]
+    bce_func = loss_fn[2]
+    topo_func = loss_fn[3]
+    dice_func = loss_fn[4]
 
-    dice_l = dice_loss(pred_mask.sigmoid(), label.to(args.device))
-    focal_l = focal_loss(pred_mask.sigmoid(), label.to(args.device))
+    pred_mask = pred_mask.sigmoid()
 
-    lbce = torch.nn.BCELoss()(pred_mask.sigmoid(), label.to(args.device))
+    bce_loss = bce_func(pred_mask, mask.to(args.device))
 
-    loss = lbce * args.weight_bce + dice_l * args.weight_dice + focal_l * args.weight_focal
-    if args.weight_topo and epoch > args.topo_after:
-        topo_l = topo(pred_mask, label, vecmap_angles)
-        loss += topo_l * args.weight_topo
+    label_one_hot = torch.stack([1 - mask, mask], dim=1).to(args.device)
+    pred_one_hot = torch.stack([1 - pred_mask, pred_mask], dim=1).to(args.device)
+    topo_loss = topo_func(pred_one_hot, label_one_hot)
+    dice_loss = dice_func(pred_one_hot, label_one_hot)
 
-        return loss, [torch.tensor(0), torch.tensor(0), topo_l, lbce, dice_l, focal_l]
+    loss = args.weight_bce * bce_loss + args.weight_topo * topo_loss + args.weight_dice * dice_loss
 
-    return loss, [torch.tensor(0), torch.tensor(0), torch.tensor(0), lbce, dice_l, focal_l]
+    return loss, [torch.tensor(0), torch.tensor(0), topo_loss, bce_loss, dice_loss]
 
 
 def train_one_epoch(
@@ -103,23 +98,17 @@ def train_one_epoch(
         "val_angle_loss": [],
         "topo_loss": [],
         "val_topo_loss": [],
-        "mse_loss": [],
-        "val_mse_loss": [],
+        "bce_loss": [],
+        "val_bce_loss": [],
         "dice_loss": [],
         "val_dice_loss": [],
-        "focal_loss": [],
-        "val_focal_loss": [],
     }
     for k in list(metric_fns):
         metrics[k] = []
         metrics[f"val_{k}"] = []
 
     model.train()
-    # show = True
     for (img, mask) in tqdm(train_loader):
-        # if len(metrics["loss"]) > 0:
-        #     continue
-
         img = img.to(args.device)
 
         metrics = train_step(
@@ -128,41 +117,25 @@ def train_one_epoch(
             optimizer=optimizer,
             metric_fns=metric_fns,
             metrics=metrics,
-            x=img,
-            y=mask,
-            y_vec=None,
-            epoch=epoch,
+            img=img,
+            mask=mask,
             args=args,
         )
-
-        # if show:
-        #     pm = model(img)
-        #     fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-        #     ax[0].imshow(pm[0].sigmoid().detach().cpu().numpy() * 255)
-        #     ax[1].imshow(mask[0].detach().cpu().numpy() * 255)
-        #     plt.savefig("./checkpoints/pred.png")
-        #     show = False
-
-        # break
 
     lr_scheduler.step()
 
     return metrics
 
 
-def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoch, args):
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, img, mask, args):
     optimizer.zero_grad()
 
-    pred_mask = model(x)
+    pred_mask = model(img)
 
     loss, losses = criterion(
-        num_stacks=0,
         loss_fn=loss_fn,
         pred_mask=pred_mask,
-        pred_vec=None,
-        label=y,
-        vecmap_angles=y_vec,
-        epoch=epoch,
+        mask=mask,
         args=args,
     )
 
@@ -173,12 +146,11 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoc
     metrics["road_loss"].append(losses[0].cpu().detach().numpy())
     metrics["angle_loss"].append(losses[1].cpu().detach().numpy())
     metrics["topo_loss"].append(losses[2].cpu().detach().numpy())
-    metrics["mse_loss"].append(losses[3].cpu().detach().numpy())
+    metrics["bce_loss"].append(losses[3].cpu().detach().numpy())
     metrics["dice_loss"].append(losses[4].cpu().detach().numpy())
-    metrics["focal_loss"].append(losses[5].cpu().detach().numpy())
 
     for k, fn in metric_fns.items():  # TODO: make pred 0, 1
-        metrics[k].append(fn(pred_mask.sigmoid(), y.to(device=args.device)).cpu())
+        metrics[k].append(fn(pred_mask.sigmoid(), mask.to(device=args.device)).cpu())
 
     return metrics
 
@@ -192,17 +164,13 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
             pred_mask = model(img)  # forward pass
 
             loss, losses = criterion(
-                num_stacks=0,
                 loss_fn=loss_fn,
                 pred_mask=pred_mask,
-                pred_vec=None,
-                label=mask,
-                vecmap_angles=None,
-                epoch=epoch,
+                mask=mask,
                 args=args,
             )
 
-            if show and (epoch + 1) % 1 == 0:
+            if show and (epoch + 1) % 5 == 0:
                 n = 5
 
                 plot_predictions(
@@ -218,9 +186,8 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
             metrics["val_road_loss"].append(losses[0].cpu().detach().numpy())
             metrics["val_angle_loss"].append(losses[1].cpu().detach().numpy())
             metrics["val_topo_loss"].append(losses[2].cpu().detach().numpy())
-            metrics["val_mse_loss"].append(losses[3].cpu().detach().numpy())
+            metrics["val_bce_loss"].append(losses[3].cpu().detach().numpy())
             metrics["val_dice_loss"].append(losses[4].cpu().detach().numpy())
-            metrics["val_focal_loss"].append(losses[5].cpu().detach().numpy())
 
             for k, fn in metric_fns.items():
                 metrics[f"val_{k}"].append(

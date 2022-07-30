@@ -1,8 +1,6 @@
 import math
 import os
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -157,11 +155,6 @@ class HourglassModuleMTL(nn.Module):
         return self._hour_glass_forward(self.depth, x)
 
 
-################################################################
-############### StackHOurGlassNet with SPIN ################
-################################################################
-# We added Dual GCN module after the first downsampling layer and only at segmentation branch
-# Added Dual GCN at multiple locations (256 x 256 scale) and (128 x 128 scale)
 class HourglassNet(nn.Module):
     def __init__(
         self,
@@ -330,83 +323,74 @@ class HourglassNet(nn.Module):
         return out_1, out_2
 
 
-def criterion(num_stacks, loss_fn, pred_mask, pred_vec, label, vecmap_angles, epoch, args):
-    miou = loss_fn[0]
-    ce = loss_fn[1]
-    topo = loss_fn[2]
-    dice_loss = loss_fn[3]
-    focal_loss = loss_fn[4]
+def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, args):
+    miou_func = loss_fn[0]
+    vec_func = loss_fn[1]
+    bce_func = loss_fn[2]
+    topo_func = loss_fn[3]
+    dice_func = loss_fn[4]
 
     if not args.multi_scale_pred:
-        loss1 = 1 + miou(pred_mask, label.to(args.device))
-        loss2 = ce(pred_vec, vecmap_angles.to(args.device))
-        loss = args.miou_weight * loss1 + args.ce_weight * loss2
+        miou_loss = miou_func(pred_mask, mask.to(args.device))
+        vec_loss = vec_func(pred_vec, vecmap_angles.to(args.device))
+        bce_loss = bce_func(pred_mask, mask.to(args.device))
 
-        if args.topo_weight > 0:
-            loss3 = sum(
-                topo(
-                    F.softmax(pred_mask, dim=1)[batch_idx, 1, :, :],
-                    label[0][batch_idx].to(args.device),
-                    args.device,
-                )
-                for batch_idx in range(pred_mask.shape[0])
-            )
-            loss = loss + args.topo_weight * loss3
+        label_one_hot = torch.stack([1 - mask, mask], dim=1).to(args.device)
+        topo_loss = topo_func(pred_mask, label_one_hot)
+        dice_loss = dice_func(pred_mask, label_one_hot)
 
-            return loss, loss1, loss2, loss3
-
-        return loss, [loss1, loss2, torch.tensor(0), torch.tensor(0), torch.tensor(0)]
-
-    loss1 = 1 + miou(pred_mask[0], label[0].to(args.device), False)
-    for idx in range(num_stacks - 1):
-        loss1 += 1 + miou(pred_mask[idx + 1], label[idx].to(args.device), False)
-    loss1 = loss1 / num_stacks
-
-    loss1 += 1 + miou(pred_mask[-1], label[-1].to(args.device), False)
-
-    loss2 = ce(pred_vec[0], vecmap_angles[0].to(args.device))
-    for idx in range(num_stacks - 1):
-        loss2 += ce(pred_vec[idx + 1], vecmap_angles[idx].to(args.device))
-    loss2 = loss2 / num_stacks
-
-    loss2 += ce(pred_vec[-1], vecmap_angles[-1].to(args.device))
-
-    bce = nn.BCELoss()
-    lbce = bce(pred_mask[0].softmax(dim=1)[:, 1, :, :], label[0].to(args.device))
-    for idx in range(num_stacks - 1):
-        lbce += bce(pred_mask[idx + 1].softmax(dim=1)[:, 1, :, :], label[idx].to(args.device))
-    lbce = lbce / num_stacks
-    lbce += bce(pred_mask[-1].softmax(dim=1)[:, 1, :, :], label[-1].to(args.device))
-
-    dice_l = dice_loss(pred_mask[0], label[0].to(args.device))
-    for idx in range(num_stacks - 1):
-        dice_l += dice_loss(pred_mask[idx + 1], label[idx].to(args.device))
-    dice_l = dice_l / num_stacks
-    dice_l += dice_loss(pred_mask[-1], label[-1].to(args.device))
-
-    focal_l = focal_loss(pred_mask[0], label[0].to(args.device))
-    for idx in range(num_stacks - 1):
-        focal_l += focal_loss(pred_mask[idx + 1], label[idx].to(args.device))
-    focal_l = focal_l / num_stacks
-    focal_l += focal_loss(pred_mask[-1], label[-1].to(args.device))
-
-    loss = (
-        args.weight_miou * loss1
-        + args.weight_vec * loss2
-        + lbce * args.weight_bce
-        + dice_l * args.weight_dice
-        + focal_l * args.weight_focal
-    )
-
-    if args.weight_topo > 0 and epoch > args.topo_after:
-        loss3 = topo(
-            torch.stack([1 - label[-1], label[-1]], dim=1).to(args.device),
-            pred_mask[-1].softmax(dim=1),
+        loss = (
+            args.weight_miou * miou_loss
+            + args.weight_vec * vec_loss
+            + args.weight_bce * bce_loss
+            + args.weight_topo * topo_loss
+            + args.weight_dice * dice_loss
         )
 
-        return loss, [loss1, loss2, loss3, lbce, dice_l, focal_l]
+        return loss, [miou_loss, vec_loss, bce_loss, topo_loss, dice_loss]
 
-    return loss, [loss1, loss2, torch.tensor(0), lbce, dice_l, focal_l]
+    # get average loss over all stacks
+    miou_loss = miou_func(pred_mask[0], mask[0].to(args.device))
+    vec_loss = vec_func(pred_vec[0], vecmap_angles[0].to(args.device))
+
+    pm_logits = pred_mask[0].softmax(dim=1)[:, 1, :, :]
+    bce_loss = bce_func(pm_logits, mask[0].to(args.device))
+
+    label_one_hot = torch.stack([1 - mask[0], mask[0]], dim=1).to(args.device)
+    topo_loss = topo_func(pred_mask[0], label_one_hot)
+    dice_loss = dice_func(pred_mask[0], label_one_hot)
+
+    for i in range(1, num_stacks):
+        miou_loss += miou_func(pred_mask[i], mask[i - 1].to(args.device))
+        vec_loss += vec_func(pred_vec[i], vecmap_angles[i - 1].to(args.device))
+
+        pm_logits = pred_mask[i].softmax(dim=1)[:, 1, :, :]
+        bce_loss += bce_func(pm_logits, mask[i - 1].to(args.device))
+
+        label_one_hot = torch.stack([1 - mask[i - 1], mask[i - 1]], dim=1).to(args.device)
+        topo_loss += topo_func(pred_mask[i], label_one_hot)
+        dice_loss += dice_func(pred_mask[i], label_one_hot)
+
+    # add loss of final classification for higher weighting
+    miou_loss = miou_loss / num_stacks + miou_func(pred_mask[-1], mask[-1].to(args.device))
+    vec_loss = vec_loss / num_stacks + vec_func(pred_vec[-1], vecmap_angles[-1].to(args.device))
+
+    pm_logits = pred_mask[-1].softmax(dim=1)[:, 1, :, :]
+    bce_loss = bce_loss / num_stacks + bce_func(pm_logits, mask[-1].to(args.device))
+
+    label_one_hot = torch.stack([1 - mask[-1], mask[-1]], dim=1).to(args.device)
+    topo_loss = topo_loss / num_stacks + topo_func(pred_mask[-1], label_one_hot)
+    dice_loss = dice_loss / num_stacks + dice_func(pred_mask[-1], label_one_hot)
+
+    loss = (
+        args.weight_miou * miou_loss
+        + args.weight_vec * vec_loss
+        + args.weight_bce * bce_loss
+        + args.weight_topo * topo_loss
+        + args.weight_dice * dice_loss
+    )
+
+    return loss, [miou_loss, vec_loss, bce_loss, topo_loss, dice_loss]
 
 
 def train_one_epoch(
@@ -425,16 +409,14 @@ def train_one_epoch(
         "val_bce_loss": [],
         "dice_loss": [],
         "val_dice_loss": [],
-        "focal_loss": [],
-        "val_focal_loss": [],
     }
     for k in list(metric_fns):
         metrics[k] = []
         metrics[f"val_{k}"] = []
 
     model.train()
-    for (inputsBGR, labels, vecmap_angles) in tqdm(train_loader):
-        inputsBGR = inputsBGR.to(args.device)
+    for (img, mask, vecmap_angles) in tqdm(train_loader):
+        img = img.to(args.device)
 
         # for _ in range(100):
         metrics = train_step(
@@ -443,10 +425,9 @@ def train_one_epoch(
             optimizer=optimizer,
             metric_fns=metric_fns,
             metrics=metrics,
-            x=inputsBGR,
-            y=labels,
+            img=img,
+            mask=mask,
             y_vec=vecmap_angles,
-            epoch=epoch,
             args=args,
         )
 
@@ -455,19 +436,18 @@ def train_one_epoch(
     return metrics
 
 
-def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoch, args):
+def train_step(model, loss_fn, optimizer, metric_fns, metrics, img, mask, y_vec, args):
     optimizer.zero_grad()
 
-    pred_mask, pred_vec = model(x)
+    pred_mask, pred_vec = model(img)
 
     loss, losses = criterion(
         num_stacks=model.num_stacks,
         loss_fn=loss_fn,
         pred_mask=pred_mask,
         pred_vec=pred_vec,
-        label=y,
+        mask=mask,
         vecmap_angles=y_vec,
-        epoch=epoch,
         args=args,
     )
 
@@ -480,14 +460,13 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, x, y, y_vec, epoc
     metrics["topo_loss"].append(losses[2].cpu().detach().numpy())
     metrics["bce_loss"].append(losses[3].cpu().detach().numpy())
     metrics["dice_loss"].append(losses[4].cpu().detach().numpy())
-    metrics["focal_loss"].append(losses[5].cpu().detach().numpy())
 
     if args.multi_scale_pred:
         pred_mask = pred_mask[-1]
-        y = y[-1]
+        mask = mask[-1]
 
     for k, fn in metric_fns.items():
-        metrics[k].append(fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device)).item())
+        metrics[k].append(fn(pred_mask.argmax(dim=1).float(), mask.to(device=args.device)).item())
 
     return metrics
 
@@ -496,32 +475,31 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
     model.eval()
     with torch.no_grad():  # do not keep track of gradients
         show = True
-        for (inputsBGR, y, y_vec) in tqdm(val_loader):
-            inputsBGR = inputsBGR.to(device=args.device)
-            pred_mask, pred_vec = model(inputsBGR)  # forward pass
+        for (img, mask, y_vec) in tqdm(val_loader):
+            img = img.to(device=args.device)
+            pred_mask, pred_vec = model(img)  # forward pass
 
             loss, losses = criterion(
                 num_stacks=model.num_stacks,
                 loss_fn=loss_fn,
                 pred_mask=pred_mask,
                 pred_vec=pred_vec,
-                label=y,
+                mask=mask,
                 vecmap_angles=y_vec,
-                epoch=epoch,
                 args=args,
             )
 
             if args.multi_scale_pred:
                 pred_mask = pred_mask[-1]
                 pred_vec = pred_vec[-1]
-                y = y[-1]
+                mask = mask[-1]
 
-            if show and (epoch + 1) % 1 == 0:
+            if show and (epoch + 1) % 5 == 0:
                 n = 5
 
                 plot_predictions(
-                    inputsBGR[:n],
-                    y[:n],
+                    img[:n],
+                    mask[:n],
                     pred_mask[:n],
                     os.path.join(checkpoint_path, "plots", f"predictions_{epoch + 1}.pdf"),
                     epoch,
@@ -534,11 +512,10 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
             metrics["val_topo_loss"].append(losses[2].cpu().detach().numpy())
             metrics["val_bce_loss"].append(losses[3].cpu().detach().numpy())
             metrics["val_dice_loss"].append(losses[4].cpu().detach().numpy())
-            metrics["val_focal_loss"].append(losses[5].cpu().detach().numpy())
 
             for k, fn in metric_fns.items():
                 metrics[f"val_{k}"].append(
-                    fn(pred_mask.argmax(dim=1).float(), y.to(device=args.device)).item()
+                    fn(pred_mask.argmax(dim=1).float(), mask.to(device=args.device)).item()
                 )
 
     log_metrics(metrics)

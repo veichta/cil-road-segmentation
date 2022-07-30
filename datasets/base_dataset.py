@@ -4,7 +4,6 @@ import cv2
 import numpy as np
 import torch
 from torchvision import transforms
-from PIL import Image
 from tqdm import tqdm
 
 
@@ -17,6 +16,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.patches = use_patches
         self.target_size = target_size
         self.is_train = is_train
+        self.do_augmentations = args.augmentation
 
         self.augment = torch.nn.Sequential(
             transforms.RandomAdjustSharpness(3),
@@ -65,8 +65,7 @@ class BaseDataset(torch.utils.data.Dataset):
         img = torch.tensor(img, dtype=torch.float32).permute(2, 0, 1)
         mask = torch.tensor(mask, dtype=torch.float32)
 
-        if self.is_train:
-            img= self.augment(img)
+        if self.is_train and self.do_augmentations:
+            img = self.augment(img)
 
-        # print(img.device, mask.device)
         return img, mask

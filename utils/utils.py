@@ -6,6 +6,31 @@ import numpy as np
 import torch
 
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    elif v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected.")
+
+
+def weights_init(model, manual_seed=7):
+    np.random.seed(manual_seed)
+    torch.manual_seed(manual_seed)
+    random.seed(manual_seed)
+    torch.cuda.manual_seed_all(manual_seed)
+    for m in model.modules():
+        if isinstance(m, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
+            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            m.weight.data.normal_(0, math.sqrt(2.0 / n))
+        elif isinstance(m, torch.nn.BatchNorm2d):
+            m.weight.data.fill_(1)
+            m.bias.data.zero_()
+
+
 def parse_arguments():
     """Parse command line arguments.
 
@@ -25,11 +50,6 @@ def parse_arguments():
         type=str, help="Backbone name"
     )
 
-    parser.add_argument(
-        "--config", 
-        type=str, default="./config.json", help="Path to config file."
-    )
-
     # Training setup
     parser.add_argument(
         "--val_split", 
@@ -40,25 +60,23 @@ def parse_arguments():
         type=int, default=10, help="Number of epochs"
     )
     parser.add_argument(
+        "--augmentation", 
+        type=int, default=0, help="Whether to use augmentations."
+    )
+    parser.add_argument(
         "--lr", 
         type=float, default=1e-2, help="Learning rate"
     )
     parser.add_argument(
         "--batch_size", 
-        type=int, default=32, help="Batch size"
-    )
-    parser.add_argument(
-        "--weight_decay", 
-        type=float, default=0, help="Weight decay"
+        type=int, default=6, help="Batch size"
     )
     parser.add_argument(
         "--grad_clip",
         type=float, default=0.1, help="Gradient clipping"
     )
-    parser.add_argument(
-        "--dropout", 
-        type=float, default=0, help="Dropout"    
-    )
+
+    # Loss
     parser.add_argument(
         "--weight_miou", 
         type=float, default=1, help="Weight for road loss"
@@ -83,11 +101,6 @@ def parse_arguments():
         "--weight_focal",
         type=float, default=0, help="Weight for topo loss"
     )
-    parser.add_argument(
-        "--topo_after",
-        type=int, default=50, help="Add topo weight after epoch"
-    )
-    
 
     # Dataset setup
     parser.add_argument(
@@ -96,7 +109,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--datasets",
-        type=str, choices=["all", "cil", "cil-mrd", "cil-dg", "dg"], default="all", help="Datasets to use"
+        type=str, choices=["all", "cil", "cil-mrd", "cil-dg", "dg"], default="cil", help="Datasets to use"
     )
     parser.add_argument(
         "--min_pixels",
@@ -140,28 +153,3 @@ def parse_arguments():
     )
     # fmt: on
     return parser.parse_args()
-
-
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ("yes", "true", "t", "y", "1"):
-        return True
-    elif v.lower() in ("no", "false", "f", "n", "0"):
-        return False
-    else:
-        raise argparse.ArgumentTypeError("Boolean value expected.")
-
-
-def weights_init(model, manual_seed=7):
-    np.random.seed(manual_seed)
-    torch.manual_seed(manual_seed)
-    random.seed(manual_seed)
-    torch.cuda.manual_seed_all(manual_seed)
-    for m in model.modules():
-        if isinstance(m, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
-            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            m.weight.data.normal_(0, math.sqrt(2.0 / n))
-        elif isinstance(m, torch.nn.BatchNorm2d):
-            m.weight.data.fill_(1)
-            m.bias.data.zero_()

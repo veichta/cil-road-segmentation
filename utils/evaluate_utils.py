@@ -6,21 +6,12 @@ import pandas as pd
 
 
 def denormalize_img(img):
-    # channel_mean = [0.510, 0.521, 0.518]
-    # channel_std = [0.239, 0.218, 0.209]
-
-    # img = np.array(img, dtype=np.float32)
-    # for c in range(3):
-    #     img[:, :, c] = (img[:, :, c] * channel_std[c]) + channel_mean[c]
-
-    # # plt.imshow(np.array(img, dtype=np.uint8))
-    # # plt.show()
-    img = img * 255.0
-
-    return np.array(img, dtype=np.uint8)
+    """Denormalize an image."""
+    return np.array(img * 255, dtype=np.uint8)
 
 
 def plot_predictions(images, masks, pred_masks, path, epoch):
+    """Plot predictions of the current epoch."""
     fig, ax = plt.subplots(len(images), 4, figsize=(20, len(images) * 5))
 
     images = [img.permute(1, 2, 0).cpu().numpy()[:, :, ::-1] for img in images]
@@ -60,150 +51,74 @@ def plot_predictions(images, masks, pred_masks, path, epoch):
     plt.close()
 
 
-def save_and_plot_history(checkpoint_dir, total_start, history):
-    losses = [sum(metrics["loss"]) / len(metrics["loss"]) for _, metrics in history.items()]
-    val_losses = [
-        sum(metrics["val_loss"]) / len(metrics["val_loss"]) for _, metrics in history.items()
-    ]
+def save_and_plot_history(checkpoint_dir, history):
+    """Save and plot the history of the training."""
+    losses = [np.mean(metrics["loss"]) for _, metrics in history.items()]
+    val_losses = [np.mean(metrics["val_loss"]) for _, metrics in history.items()]
 
-    road_losses = [
-        sum(metrics["road_loss"]) / len(metrics["road_loss"]) for _, metrics in history.items()
-    ]
-    val_road_losses = [
-        sum(metrics["val_road_loss"]) / len(metrics["val_road_loss"])
-        for _, metrics in history.items()
-    ]
+    road_losses = [np.mean(metrics["road_loss"]) for _, metrics in history.items()]
+    val_road_losses = [np.mean(metrics["val_road_loss"]) for _, metrics in history.items()]
 
-    angle_losses = [
-        sum(metrics["angle_loss"]) / len(metrics["angle_loss"]) for _, metrics in history.items()
-    ]
-    val_angle_losses = [
-        sum(metrics["val_angle_loss"]) / len(metrics["val_angle_loss"])
-        for _, metrics in history.items()
-    ]
+    angle_losses = [np.mean(metrics["angle_loss"]) for _, metrics in history.items()]
+    val_angle_losses = [np.mean(metrics["val_angle_loss"]) for _, metrics in history.items()]
 
-    topo_losses = [
-        sum(metrics["topo_loss"]) / len(metrics["topo_loss"]) for _, metrics in history.items()
-    ]
-    val_topo_losses = [
-        sum(metrics["val_topo_loss"]) / len(metrics["val_topo_loss"])
-        for _, metrics in history.items()
-    ]
+    topo_losses = [np.mean(metrics["topo_loss"]) for _, metrics in history.items()]
+    val_topo_losses = [np.mean(metrics["val_topo_loss"]) for _, metrics in history.items()]
 
-    bce_losses = [
-        sum(metrics["bce_loss"]) / len(metrics["bce_loss"]) for _, metrics in history.items()
-    ]
-    val_bce_losses = [
-        sum(metrics["val_bce_loss"]) / len(metrics["val_bce_loss"])
-        for _, metrics in history.items()
-    ]
+    bce_losses = [np.mean(metrics["bce_loss"]) for _, metrics in history.items()]
+    val_bce_losses = [np.mean(metrics["val_bce_loss"]) for _, metrics in history.items()]
 
-    dice_losses = [
-        sum(metrics["dice_loss"]) / len(metrics["dice_loss"]) for _, metrics in history.items()
-    ]
-    val_dice_losses = [
-        sum(metrics["val_dice_loss"]) / len(metrics["val_dice_loss"])
-        for _, metrics in history.items()
-    ]
+    dice_losses = [np.mean(metrics["dice_loss"]) for _, metrics in history.items()]
+    val_dice_losses = [np.mean(metrics["val_dice_loss"]) for _, metrics in history.items()]
 
-    focal_losses = [
-        sum(metrics["focal_loss"]) / len(metrics["focal_loss"]) for _, metrics in history.items()
-    ]
-    val_focal_losses = [
-        sum(metrics["val_focal_loss"]) / len(metrics["val_focal_loss"])
-        for _, metrics in history.items()
-    ]
+    accs = [np.mean(metrics["acc"]) for _, metrics in history.items()]
+    val_accs = [np.mean(metrics["val_acc"]) for _, metrics in history.items()]
 
-    accs = [sum(metrics["acc"]) / len(metrics["acc"]) for _, metrics in history.items()]
-    val_accs = [sum(metrics["val_acc"]) / len(metrics["val_acc"]) for _, metrics in history.items()]
-    patch_accs = [
-        sum(metrics["patch_acc"]) / len(metrics["patch_acc"]) for _, metrics in history.items()
-    ]
-    val_patch_accs = [
-        sum(metrics["val_patch_acc"]) / len(metrics["val_patch_acc"])
-        for _, metrics in history.items()
-    ]
+    patch_accs = [np.mean(metrics["patch_acc"]) for _, metrics in history.items()]
+    val_patch_accs = [np.mean(metrics["val_patch_acc"]) for _, metrics in history.items()]
 
-    plt.plot(losses, label="Train Loss")
-    plt.plot(val_losses, label="Val Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Overall Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_loss.pdf")
-    plt.close()
+    fig, ax = plt.subplots(2, 4, figsize=(20, 10))
+    ax[0, 0].plot(range(len(losses)), losses, label="Training Loss")
+    ax[0, 0].plot(range(len(val_losses)), val_losses, label="Validation Loss")
+    ax[0, 0].set_title("Loss")
+    ax[0, 0].legend()
 
-    plt.plot(road_losses, label="Train Road Loss")
-    plt.plot(val_road_losses, label="Val Road Loss")
-    plt.ylim(np.min(road_losses) - 1, np.max(road_losses) + 1)
-    plt.xlabel("Epoch")
-    plt.ylabel("Road Loss")
-    plt.title("Road Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_road_loss.pdf")
-    plt.close()
+    ax[0, 1].plot(range(len(road_losses)), road_losses, label="Training Road Loss")
+    ax[0, 1].plot(range(len(val_road_losses)), val_road_losses, label="Validation Road Loss")
+    ax[0, 1].set_title("Road Loss")
+    ax[0, 1].legend()
 
-    plt.plot(angle_losses, label="Train Angle Loss")
-    plt.plot(val_angle_losses, label="Val Angle Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Angle Loss")
-    plt.title("Angle Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_angle_loss.pdf")
-    plt.close()
+    ax[0, 2].plot(range(len(angle_losses)), angle_losses, label="Training Angle Loss")
+    ax[0, 2].plot(range(len(val_angle_losses)), val_angle_losses, label="Validation Angle Loss")
+    ax[0, 2].set_title("Angle Loss")
+    ax[0, 2].legend()
 
-    plt.plot(topo_losses, label="Train Topo Loss")
-    plt.plot(val_topo_losses, label="Val Topo Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Topo Loss")
-    plt.title("Topo Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_topo_loss.pdf")
-    plt.close()
+    ax[0, 3].plot(range(len(topo_losses)), topo_losses, label="Training Topo Loss")
+    ax[0, 3].plot(range(len(val_topo_losses)), val_topo_losses, label="Validation Topo Loss")
+    ax[0, 3].set_title("Topo Loss")
+    ax[0, 3].legend()
 
-    plt.plot(bce_losses, label="Train BCE Loss")
-    plt.plot(val_bce_losses, label="Val BCE Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("BCE Loss")
-    plt.title("BCE Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_mse_loss.pdf")
-    plt.close()
+    ax[1, 0].plot(range(len(bce_losses)), bce_losses, label="Training BCE Loss")
+    ax[1, 0].plot(range(len(val_bce_losses)), val_bce_losses, label="Validation BCE Loss")
+    ax[1, 0].set_title("BCE Loss")
+    ax[1, 0].legend()
 
-    plt.plot(dice_losses, label="Train Dice Loss")
-    plt.plot(val_dice_losses, label="Val Dice Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Dice Loss")
-    plt.title("Dice Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_dice_loss.pdf")
-    plt.close()
+    ax[1, 1].plot(range(len(dice_losses)), dice_losses, label="Training Dice Loss")
+    ax[1, 1].plot(range(len(val_dice_losses)), val_dice_losses, label="Validation Dice Loss")
+    ax[1, 1].set_title("Dice Loss")
+    ax[1, 1].legend()
 
-    plt.plot(focal_losses, label="Train Focal Loss")
-    plt.plot(val_focal_losses, label="Val Focal Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Focal Loss")
-    plt.title("Focal Loss")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_focal_loss.pdf")
-    plt.close()
+    ax[1, 2].plot(range(len(accs)), accs, label="Training Accuracy")
+    ax[1, 2].plot(range(len(val_accs)), val_accs, label="Validation Accuracy")
+    ax[1, 2].set_title("Accuracy")
+    ax[1, 2].legend()
 
-    plt.plot(accs, label="Train Acc")
-    plt.plot(val_accs, label="Val Acc")
-    plt.xlabel("Epoch")
-    plt.ylabel("Acc")
-    plt.title("Overall Accuracy")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_acc.pdf")
-    plt.close()
+    ax[1, 3].plot(range(len(patch_accs)), patch_accs, label="Training Patch Accuracy")
+    ax[1, 3].plot(range(len(val_patch_accs)), val_patch_accs, label="Validation Patch Accuracy")
+    ax[1, 3].set_title("Patch Accuracy")
+    ax[1, 3].legend()
 
-    plt.plot(patch_accs, label="Train Patch Acc")
-    plt.plot(val_patch_accs, label="Val Patch Acc")
-    plt.xlabel("Epoch")
-    plt.ylabel("Patch Acc")
-    plt.title("Patch Accuracy")
-    plt.legend()
-    plt.savefig(f"{checkpoint_dir}/plots/history_patch_acc.pdf")
+    plt.savefig(f"{checkpoint_dir}/plots/history.pdf")
     plt.close()
 
     df_hist = [
@@ -220,8 +135,6 @@ def save_and_plot_history(checkpoint_dir, total_start, history):
             val_bce_losses[epoch],
             dice_losses[epoch],
             val_dice_losses[epoch],
-            focal_losses[epoch],
-            val_focal_losses[epoch],
             accs[epoch],
             val_accs[epoch],
             patch_accs[epoch],
@@ -245,8 +158,6 @@ def save_and_plot_history(checkpoint_dir, total_start, history):
             "val_mse_loss",
             "train_dice_loss",
             "val_dice_loss",
-            "train_focal_loss",
-            "val_focal_loss",
             "train_acc",
             "val_acc",
             "train_patch_acc",
@@ -256,6 +167,7 @@ def save_and_plot_history(checkpoint_dir, total_start, history):
 
 
 def log_metrics(metrics):
+    """Log metrics of the current epoch."""
     train_loss = np.mean(metrics["loss"])
     val_loss = np.mean(metrics["val_loss"])
 
@@ -274,9 +186,6 @@ def log_metrics(metrics):
     train_dice_loss = np.mean(metrics["dice_loss"])
     val_dice_loss = np.mean(metrics["val_dice_loss"])
 
-    train_focal_loss = np.mean(metrics["focal_loss"])
-    val_focal_loss = np.mean(metrics["val_focal_loss"])
-
     train_acc = np.mean(metrics["acc"])
     val_acc = np.mean(metrics["val_acc"])
 
@@ -291,7 +200,6 @@ def log_metrics(metrics):
     logging.info(f"\tTopo loss:  {train_topo_loss:.4f}\t({val_topo_loss:.4f})")
     logging.info(f"\tBCE:        {train_bce:.4f}\t({val_bce:.4f})")
     logging.info(f"\tDice loss:  {train_dice_loss:.4f}\t({val_dice_loss:.4f})")
-    logging.info(f"\tFocal loss: {train_focal_loss:.4f}\t({val_focal_loss:.4f})")
     logging.info(f"\tAcc:        {train_acc:.4f}\t({val_acc:.4f})")
     logging.info(f"\tPatch acc:  {train_patch_acc:.4f}\t({val_patch_acc:.4f})")
     logging.info("")

@@ -4,39 +4,58 @@ import torch.nn.functional as F
 
 
 def soft_erode(img):
-    if len(img.shape) == 4:
-        p1 = -F.max_pool2d(-img, (3, 1), (1, 1), (1, 0))
-        p2 = -F.max_pool2d(-img, (1, 3), (1, 1), (0, 1))
-        return torch.min(p1, p2)
-    elif len(img.shape) == 5:
-        p1 = -F.max_pool3d(-img, (3, 1, 1), (1, 1, 1), (1, 0, 0))
-        p2 = -F.max_pool3d(-img, (1, 3, 1), (1, 1, 1), (0, 1, 0))
-        p3 = -F.max_pool3d(-img, (1, 1, 3), (1, 1, 1), (0, 0, 1))
-        return torch.min(torch.min(p1, p2), p3)
+    """Function to erode an image.
 
-    else:
+    Args:
+        img (torch.tensor): Image to be eroded with shape (N, C, H, W).
+
+    Returns:
+        torch.tensor: eroded image.
+    """
+
+    if len(img.shape) != 4:
         raise ValueError(f"Invalid input shape: {img.shape}")
+
+    p1 = -F.max_pool2d(-img, (3, 1), (1, 1), (1, 0))
+    p2 = -F.max_pool2d(-img, (1, 3), (1, 1), (0, 1))
+    return torch.min(p1, p2)
 
 
 def soft_dilate(img):
-    if len(img.shape) == 4:
-        return F.max_pool2d(img, (3, 3), (1, 1), (1, 1))
+    """Function to dilate an image.
 
-    elif len(img.shape) == 5:
-        return F.max_pool3d(img, (3, 3, 3), (1, 1, 1), (1, 1, 1))
+    Args:
+        img (torch.tensor): Image to be dilated with shape (N, C, H, W).
 
-    else:
+    Returns:
+        torch.tensor: eroded image.
+    """
+
+    if len(img.shape) != 4:
         raise ValueError(f"Invalid input shape: {img.shape}")
+
+    return F.max_pool2d(img, (3, 3), (1, 1), (1, 1))
 
 
 def soft_open(img):
+    """Function to open an image."""
     return soft_dilate(soft_erode(img))
 
 
 def soft_skel(img, iter_):
+    """Function to perform soft skeletonization.
+
+    Args:
+        img (torch.tensor): Image to be skeletonized with shape (N, C, H, W).
+        iter_ (int): Number of iterations.
+
+    Returns:
+        torch.tensor: skeletonized image.
+    """
+
     img1 = soft_open(img)
     skel = F.relu(img - img1)
-    for j in range(iter_):
+    for _ in range(iter_):
         img = soft_erode(img)
         img1 = soft_open(img)
         delta = F.relu(img - img1)
@@ -51,6 +70,15 @@ class soft_cldice(nn.Module):
         self.smooth = smooth
 
     def forward(self, y_true, y_pred):
+        """Function to compute the soft topo loss.
+
+        Args:
+            y_true (torch.tensor): Ground truth with shape (N, C, H, W).
+            y_pred (torch.tensor): Predicted image with shape (N, C, H, W).
+
+        Returns:
+            torch.tensor: soft topo loss.
+        """
         skel_pred = soft_skel(y_pred, self.iter)
         skel_true = soft_skel(y_true, self.iter)
         tprec = (torch.sum(torch.multiply(skel_pred, y_true)[:, 1:, ...]) + self.smooth) / (
@@ -59,19 +87,18 @@ class soft_cldice(nn.Module):
         tsens = (torch.sum(torch.multiply(skel_true, y_pred)[:, 1:, ...]) + self.smooth) / (
             torch.sum(skel_true[:, 1:, ...]) + self.smooth
         )
-        cl_dice = 1.0 - 2.0 * (tprec * tsens) / (tprec + tsens)
-        return cl_dice
+        return 1.0 - 2.0 * (tprec * tsens) / (tprec + tsens)
 
 
 def soft_dice(y_true, y_pred):
-    """[function to compute dice loss]
+    """Function to compute soft dice loss.
 
     Args:
-        y_true ([float32]): [ground truth image]
-        y_pred ([float32]): [predicted image]
+        y_true (torch.tensor): Ground truth with shape (N, C, H, W).
+        y_pred (torch.tensor): Predicted image with shape (N, C, H, W).
 
     Returns:
-        [float32]: [loss value]
+        torch.tensor: Soft dice loss.
     """
     smooth = 1
     intersection = torch.sum((y_true * y_pred)[:, 1:, ...])
@@ -89,6 +116,15 @@ class soft_dice_cldice(soft_cldice):
         self.alpha = alpha
 
     def forward(self, y_true, y_pred):
+        """Function to compute soft dice loss and topo loss.
+
+        Args:
+            y_true (torch.tensor): Ground truth with shape (N, C, H, W).
+            y_pred (torch.tensor): Predicted image with shape (N, C, H, W).
+
+        Returns:
+            torch.tensor: Weighted sum of dice loss and topo loss.
+        """
         dice = soft_dice(y_true, y_pred)
         skel_pred = soft_skel(y_pred, self.iter)
         skel_true = soft_skel(y_true, self.iter)
