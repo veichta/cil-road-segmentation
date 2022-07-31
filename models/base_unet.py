@@ -3,7 +3,11 @@ import os
 import torch
 from torch import nn
 from tqdm import tqdm
+<<<<<<< HEAD
 from utils.evaluate_utils import log_metrics, plot_predictions
+=======
+from sklearn.metrics import f1_score
+>>>>>>> master
 
 PATCH_SIZE = 16  # pixels per side of square patches
 VAL_SIZE = 10  # size of the validation set (number of images)
@@ -86,6 +90,7 @@ def criterion(loss_fn, pred_mask, mask, args):
     return loss, [torch.tensor(0), torch.tensor(0), topo_loss, bce_loss, dice_loss]
 
 
+<<<<<<< HEAD
 def train_one_epoch(
     train_loader, model, criterion, optimizer, lr_scheduler, metric_fns, epoch, args
 ):
@@ -104,6 +109,28 @@ def train_one_epoch(
         "val_dice_loss": [],
     }
     for k in list(metric_fns):
+=======
+def accuracy_fn(y_hat, y):
+    # computes classification accuracy
+    return (y_hat.round() == y.round()).float().mean()
+#FIXME: f1 score is only calculated for the first sample
+def f1_fn(y_hat, y):
+    return f1_score(y[0].cpu().int(), y_hat[0].cpu().int(), average='weighted')
+
+def patch_F1_fn(y_hat, y):
+    h_patches = y.shape[-2] // PATCH_SIZE
+    w_patches = y.shape[-1] // PATCH_SIZE
+    patches_hat = torch.squeeze(
+        y_hat.reshape(-1, 1, h_patches, PATCH_SIZE, w_patches, PATCH_SIZE).mean((-1, -3)) > CUTOFF
+    )
+    patches = torch.squeeze(y.reshape(-1, 1, h_patches, PATCH_SIZE, w_patches, PATCH_SIZE).mean((-1, -3)) > CUTOFF)
+    return f1_score(patches[0].cpu().int(), patches_hat[0].cpu().int(), average='weighted')
+
+
+def train_one_epoch(train_loader, model, criterion, optimizer, metrics, epoch, args):
+    metrics = {"loss": [], "val_loss": []}
+    for k in metrics:
+>>>>>>> master
         metrics[k] = []
         metrics[f"val_{k}"] = []
 

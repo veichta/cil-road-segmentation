@@ -11,8 +11,12 @@ def denormalize_img(img):
 
 
 def plot_predictions(images, masks, pred_masks, path, epoch):
+<<<<<<< HEAD
     """Plot predictions of the current epoch."""
     fig, ax = plt.subplots(len(images), 4, figsize=(20, len(images) * 5))
+=======
+    fig, ax = plt.subplots(max(len(images), 2), 4, figsize=(20, len(images) * 5))
+>>>>>>> master
 
     images = [img.permute(1, 2, 0).cpu().numpy()[:, :, ::-1] for img in images]
     images = [denormalize_img(img) for img in images]

@@ -4,6 +4,139 @@ import random
 
 import numpy as np
 import torch
+<<<<<<< HEAD
+=======
+from PIL import Image
+
+
+def parse_arguments():
+    """Parse command line arguments.
+
+    Returns:
+        Namespace: Namespace with arguments.
+    """
+    # fmt: off
+    parser = argparse.ArgumentParser("CIL Road Segmentation")
+
+    # Model setup
+    parser.add_argument(
+        "--model", 
+        type=str, required=True, help="Model name"
+    )
+    parser.add_argument(
+        "--backbone",
+        type=str, help="Backbone name"
+    )
+    #Training data
+    parser.add_argument(
+        "--dataset", 
+        type=str, default="cil", help="Dataset used for training."
+    )
+
+    parser.add_argument(
+        "--config", 
+        type=str, default="./config.json", help="Path to config file."
+    )
+
+    # Training setup
+    parser.add_argument(
+        "--val_split", 
+        type=float, default=0.2, help="Validation split"
+    )
+    parser.add_argument(
+        "--num_epochs", 
+        type=int, default=10, help="Number of epochs"
+    )
+    parser.add_argument(
+        "--lr", 
+        type=float, default=1e-2, help="Learning rate"
+    )
+    parser.add_argument(
+        "--batch_size", 
+        type=int, default=32, help="Batch size"
+    )
+    parser.add_argument(
+        "--weight_decay", 
+        type=float, default=0, help="Weight decay"
+    )
+    parser.add_argument(
+        "--grad_clip",
+        type=float, default=0.1, help="Gradient clipping"
+    )
+    parser.add_argument(
+        "--dropout", 
+        type=float, default=0, help="Dropout"    
+    )
+    parser.add_argument(
+        "--weight_miou", 
+        type=float, default=1, help="Dropout"
+    )
+    parser.add_argument(
+        "--weight_vec", 
+        type=float, default=1, help="Dropout"
+    )
+
+    # Dataset setup
+    parser.add_argument(
+        "--data_path",
+        type=str, default="./data/joint-dataset", help="Path to csv file"
+    )
+    parser.add_argument(
+        "--datasets",
+        type=str, choices=["all", "cil"], default="all", help="Datasets to use"
+    )
+    parser.add_argument(
+        "--num_workers", 
+        type=int, default=4, help="Number of workers"
+    )
+
+    # General setup
+    parser.add_argument(
+        "--device",
+        type=str, default="cpu", help="Device to use"
+    )
+    parser.add_argument(
+        "--seed", 
+        type=int, default=0, help="Random seed"
+    )
+    parser.add_argument(
+        "--resume", 
+        type=str, default=None, help="Resume from checkpoint")
+    parser.add_argument(
+        "--save_dir",
+        type=str, default="./checkpoints", help="Directory to save checkpoints"
+    )
+    parser.add_argument(
+        "--log_dir", 
+        type=str, default="./logs", help="Directory to save logs"
+    )
+    parser.add_argument(
+        "--multi_scale_pred",
+        default=True,
+        type=str2bool,
+        help="perform multi-scale prediction (default: True)",
+    )
+    parser.add_argument(
+        "--model_name",
+        default="spin_model",
+        type=str,
+        help="Name of the saved model.",
+    )
+    parser.add_argument(
+        "--normalize_type",
+        type=str,
+        default="Std",
+        help="Type of normalization method."
+    )
+    parser.add_argument(
+        "--inference",
+        type=str2bool,
+        default=False,
+        help="Do inference."
+    )
+    # fmt: on
+    return parser.parse_args()
+>>>>>>> master
 
 
 def str2bool(v):

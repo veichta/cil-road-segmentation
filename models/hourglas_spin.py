@@ -485,6 +485,7 @@ def train_step(model, loss_fn, optimizer, metric_fns, metrics, img, mask, y_vec,
         pred_vec=pred_vec,
         mask=mask,
         vecmap_angles=y_vec,
+        epoch=epoch,
         args=args,
     )
 
@@ -523,6 +524,7 @@ def evaluate_model(val_loader, model, loss_fn, metric_fns, epoch, metrics, check
                 pred_vec=pred_vec,
                 mask=mask,
                 vecmap_angles=y_vec,
+                epoch=epoch,
                 args=args,
             )
 
