@@ -365,7 +365,7 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
         vec_loss += vec_func(pred_vec[i], vecmap_angles[i - 1].to(args.device))
 
         pm_logits = pred_mask[i].softmax(dim=1)[:, 1, :, :]
-        bce_loss += bce_func(pm_logits, mask[i].to(args.device))
+        bce_loss += bce_func(pm_logits, mask[i - 1].to(args.device))
 
         label_one_hot = torch.stack([1 - mask[i - 1], mask[i - 1]], dim=1).to(args.device)
         topo_loss += topo_func(label_one_hot, pred_mask[i].softmax(dim=1))
