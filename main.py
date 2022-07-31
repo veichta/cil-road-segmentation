@@ -74,7 +74,16 @@ def main(checkpoint_dir, args):
             args=args,
         )
 
-        model = HourglassNet().to(args.device)
+        if args.backbone == "resnet":
+            logging.info("Using ResNet backbone.")
+            from models.hourglas_spin import BasicResnetBlock
+            block = BasicResnetBlock
+        else:
+            logging.info("Using ResNeXt backbone.")
+            from models.hourglas_spin import ResNeXtBottleneck
+            block = ResNeXtBottleneck
+    
+        model = HourglassNet(block=block).to(args.device)
         weights_init(model, args.seed)
 
     else:
@@ -123,7 +132,7 @@ def main(checkpoint_dir, args):
     best_acc = 0
     for epoch in range(args.start_epoch, args.num_epochs):
         start = timer()
-        logging.info(f"--------- Training epoch {epoch + 1} / {args.num_epochs} ---------")
+        logging.info(f"--------- Training epoch {args.start_epoch + epoch + 1} / {args.start_epoch + args.num_epochs} ---------")
         metrics = train_one_epoch(
             train_loader=train_loader,
             model=model,

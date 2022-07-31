@@ -12,6 +12,43 @@ from models.spin import spin
 affine_par = True
 
 
+class ResNeXtBottleneck(nn.Module):
+    """
+    RexNeXt bottleneck type C
+    """
+    expansion = 1
+
+    def __init__(self, inplanes, planes, stride=1, padding=1, downsample=None):
+        super(ResNeXtBottleneck, self).__init__()
+        cardinality = 32
+        widen_factor = 1
+        base_width = 4
+        width_ratio = planes / (widen_factor * 64.)
+        D = cardinality * int(base_width * width_ratio)
+        self.conv_reduce = nn.Conv2d(inplanes, D, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn_reduce = nn.BatchNorm2d(D)
+        self.conv_conv = nn.Conv2d(D, D, kernel_size=3, stride=stride, padding=1, groups=cardinality, bias=False)
+        self.bn = nn.BatchNorm2d(D)
+        self.conv_expand = nn.Conv2d(D, planes, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn_expand = nn.BatchNorm2d(planes)
+
+        self.shortcut = nn.Sequential()
+        if inplanes != planes:
+            self.shortcut.add_module('shortcut_conv',
+                                     nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride, padding=0,
+                                               bias=False))
+            self.shortcut.add_module('shortcut_bn', nn.BatchNorm2d(planes))
+
+    def forward(self, x):
+        bottleneck = self.conv_reduce(x)
+        bottleneck = F.relu(self.bn_reduce(bottleneck), inplace=True)
+        bottleneck = self.conv_conv(bottleneck)
+        bottleneck = F.relu(self.bn(bottleneck), inplace=True)
+        bottleneck = self.conv_expand(bottleneck)
+        bottleneck = self.bn_expand(bottleneck)
+        residual = self.shortcut(x)
+        return F.relu(residual + bottleneck, inplace=True)
+
 class BasicResnetBlock(nn.Module):
     expansion = 1
 

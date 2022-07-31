@@ -47,7 +47,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--backbone",
-        type=str, help="Backbone name"
+        type=str, help="Backbone name", default="resnet"
     )
 
     # Training setup
