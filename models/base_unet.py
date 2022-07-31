@@ -78,8 +78,8 @@ def criterion(loss_fn, pred_mask, mask, args):
 
     label_one_hot = torch.stack([1 - mask, mask], dim=1).to(args.device)
     pred_one_hot = torch.stack([1 - pred_mask, pred_mask], dim=1).to(args.device)
-    topo_loss = topo_func(pred_one_hot, label_one_hot)
-    dice_loss = dice_func(pred_one_hot, label_one_hot)
+    topo_loss = topo_func(label_one_hot, pred_one_hot)
+    dice_loss = dice_func(label_one_hot, pred_one_hot)
 
     loss = args.weight_bce * bce_loss + args.weight_topo * topo_loss + args.weight_dice * dice_loss
 

@@ -336,8 +336,8 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
         bce_loss = bce_func(pred_mask, mask.to(args.device))
 
         label_one_hot = torch.stack([1 - mask, mask], dim=1).to(args.device)
-        topo_loss = topo_func(pred_mask, label_one_hot)
-        dice_loss = dice_func(pred_mask, label_one_hot)
+        topo_loss = topo_func(label_one_hot, pred_mask)
+        dice_loss = dice_func(label_one_hot, pred_mask)
 
         loss = (
             args.weight_miou * miou_loss
@@ -357,8 +357,8 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
     bce_loss = bce_func(pm_logits, mask[0].to(args.device))
 
     label_one_hot = torch.stack([1 - mask[0], mask[0]], dim=1).to(args.device)
-    topo_loss = topo_func(pred_mask[0], label_one_hot)
-    dice_loss = dice_func(pred_mask[0], label_one_hot)
+    topo_loss = topo_func(label_one_hot, pred_mask[0])
+    dice_loss = dice_func(label_one_hot, pred_mask[0])
 
     for i in range(1, num_stacks):
         miou_loss += miou_func(pred_mask[i], mask[i - 1].to(args.device))
@@ -368,8 +368,8 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
         bce_loss += bce_func(pm_logits, mask[i - 1].to(args.device))
 
         label_one_hot = torch.stack([1 - mask[i - 1], mask[i - 1]], dim=1).to(args.device)
-        topo_loss += topo_func(pred_mask[i], label_one_hot)
-        dice_loss += dice_func(pred_mask[i], label_one_hot)
+        topo_loss += topo_func(label_one_hot, pred_mask[i])
+        dice_loss += dice_func(label_one_hot, pred_mask[i])
 
     # add loss of final classification for higher weighting
     miou_loss = miou_loss / num_stacks + miou_func(pred_mask[-1], mask[-1].to(args.device))
@@ -379,8 +379,8 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
     bce_loss = bce_loss / num_stacks + bce_func(pm_logits, mask[-1].to(args.device))
 
     label_one_hot = torch.stack([1 - mask[-1], mask[-1]], dim=1).to(args.device)
-    topo_loss = topo_loss / num_stacks + topo_func(pred_mask[-1], label_one_hot)
-    dice_loss = dice_loss / num_stacks + dice_func(pred_mask[-1], label_one_hot)
+    topo_loss = topo_loss / num_stacks + topo_func(label_one_hot, pred_mask[-1])
+    dice_loss = dice_loss / num_stacks + dice_func(label_one_hot, pred_mask[-1])
 
     loss = (
         args.weight_miou * miou_loss
