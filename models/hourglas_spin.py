@@ -336,8 +336,8 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
         bce_loss = bce_func(pred_mask, mask.to(args.device))
 
         label_one_hot = torch.stack([1 - mask, mask], dim=1).to(args.device)
-        topo_loss = topo_func(label_one_hot, pred_mask)
-        dice_loss = dice_func(label_one_hot, pred_mask)
+        topo_loss = topo_func(label_one_hot, pred_mask.softmax(dim=1))
+        dice_loss = dice_func(label_one_hot, pred_mask.softmax(dim=1))
 
         loss = (
             args.weight_miou * miou_loss
@@ -357,19 +357,19 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
     bce_loss = bce_func(pm_logits, mask[0].to(args.device))
 
     label_one_hot = torch.stack([1 - mask[0], mask[0]], dim=1).to(args.device)
-    topo_loss = topo_func(label_one_hot, pred_mask[0])
-    dice_loss = dice_func(label_one_hot, pred_mask[0])
+    topo_loss = topo_func(label_one_hot, pred_mask[0].softmax(dim=1))
+    dice_loss = dice_func(label_one_hot, pred_mask[0].softmax(dim=1))
 
     for i in range(1, num_stacks):
         miou_loss += miou_func(pred_mask[i], mask[i - 1].to(args.device))
         vec_loss += vec_func(pred_vec[i], vecmap_angles[i - 1].to(args.device))
 
         pm_logits = pred_mask[i].softmax(dim=1)[:, 1, :, :]
-        bce_loss += bce_func(pm_logits, mask[i - 1].to(args.device))
+        bce_loss += bce_func(pm_logits, mask[i].to(args.device))
 
         label_one_hot = torch.stack([1 - mask[i - 1], mask[i - 1]], dim=1).to(args.device)
-        topo_loss += topo_func(label_one_hot, pred_mask[i])
-        dice_loss += dice_func(label_one_hot, pred_mask[i])
+        topo_loss += topo_func(label_one_hot, pred_mask[i].softmax(dim=1))
+        dice_loss += dice_func(label_one_hot, pred_mask[i].softmax(dim=1))
 
     # add loss of final classification for higher weighting
     miou_loss = miou_loss / num_stacks + miou_func(pred_mask[-1], mask[-1].to(args.device))
@@ -379,8 +379,8 @@ def criterion(num_stacks, loss_fn, pred_mask, pred_vec, mask, vecmap_angles, arg
     bce_loss = bce_loss / num_stacks + bce_func(pm_logits, mask[-1].to(args.device))
 
     label_one_hot = torch.stack([1 - mask[-1], mask[-1]], dim=1).to(args.device)
-    topo_loss = topo_loss / num_stacks + topo_func(label_one_hot, pred_mask[-1])
-    dice_loss = dice_loss / num_stacks + dice_func(label_one_hot, pred_mask[-1])
+    topo_loss = topo_loss / num_stacks + topo_func(label_one_hot, pred_mask[-1].softmax(dim=1))
+    dice_loss = dice_loss / num_stacks + dice_func(label_one_hot, pred_mask[-1].softmax(dim=1))
 
     loss = (
         args.weight_miou * miou_loss
