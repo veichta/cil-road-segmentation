@@ -6,62 +6,18 @@ from timeit import default_timer as timer
 
 import numpy as np
 import torch
-<<<<<<< HEAD
 from torch.nn import BCELoss
 
 from losses.road_loss import CrossEntropyLoss2d, mIoULoss
 from losses.topo_loss import soft_cldice, soft_dice
+from topoloss.topoloss_pytorch import getTopoLoss
 from utils.data_utils import load_data_info_with_split
 from utils.evaluate_utils import save_and_plot_history
 from utils.metrics import accuracy_fn, patch_accuracy_fn
-=======
-from torch import nn
-# from torchsummary import summary
-
-from models.base_unet import accuracy_fn, patch_accuracy_fn, f1_fn, patch_F1_fn
->>>>>>> master
 from utils.utils import parse_arguments
 
-from topoloss.topoloss_pytorch import getTopoLoss
 
-
-<<<<<<< HEAD
 def main(checkpoint_dir, args):
-=======
-def load_data_info_with_split(args):
-    """Apply validation split to dataset.
-
-    Args:
-        args: Arguments.
-
-    Returns:
-        pd.Dataframe: Dataset info.
-    """
-    dataset_info = pd.read_csv(os.path.join(args.data_path, "dataset.csv"))
-
-    cil_data_info = dataset_info[dataset_info["dataset"] == "CIL"]
-    
-    if args.inference:
-        return cil_data_info[cil_data_info["split"] == "test"]
-    else:
-        cil_data_info = cil_data_info[cil_data_info["split"] != "test"]
-    # set splits for CIL dataset
-    for idx, row in cil_data_info.iterrows():
-        if np.random.rand() <= args.val_split:
-            row["split"] = "val"
-
-    if args.datasets == "all":
-        dataset_info[dataset_info["dataset"] == "CIL"] = cil_data_info
-    elif args.datasets == "cil":
-        dataset_info = cil_data_info
-
-    train_df = dataset_info[dataset_info["split"] == "train"]
-    val_df = dataset_info[dataset_info["split"] == "val"]
-    return train_df, val_df
-
-
-def main(args):
->>>>>>> master
     # set seeds
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -96,38 +52,13 @@ def main(args):
         )
 
         model = UNet().to(args.device)
-<<<<<<< HEAD
-=======
-        # summary(model, input_size=(args.batch_size, 384, 384))
-
-        loss_fn = nn.MSELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
->>>>>>> master
 
     elif args.model == "spin":
         from datasets import road_dataset
         from models.hourglas_spin import HourglassNet, evaluate_model, train_one_epoch
         from utils.utils import weights_init
 
-<<<<<<< HEAD
         logging.info("Using Spin Model.")
-=======
-        target_size = (400, 400)
-
-        model = HourglassNet().to(args.device)
-        start_epoch = 0
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        
-        if args.resume:
-            checkpoint = torch.load(os.path.join("checkpoints", args.resume))
-            model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            start_epoch = checkpoint['epoch']
-            # loss = checkpoint['loss']
-        else:
-            weights_init(model, args.seed)
-        # summary(model, input_size=(3, target_size[0], target_size[1]))
->>>>>>> master
 
         train_dataset = road_dataset.RoadDataset(
             dataframe=train_df,
@@ -144,7 +75,6 @@ def main(args):
             args=args,
         )
 
-<<<<<<< HEAD
         if args.backbone == "resnet":
             logging.info("Using ResNet backbone.")
             from models.hourglas_spin import BasicResnetBlock
@@ -156,19 +86,11 @@ def main(args):
     
         model = HourglassNet(block=block).to(args.device)
         weights_init(model, args.seed)
-=======
->>>>>>> master
 
     else:
         raise NotImplementedError(f"Model {args.model} not implemented.")
 
-<<<<<<< HEAD
     # Dataloaders
-=======
-        loss_fn = [road_loss, angle_loss, getTopoLoss]
-
-    # create dataloaders
->>>>>>> master
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -182,7 +104,6 @@ def main(args):
         num_workers=args.num_workers,
     )
 
-<<<<<<< HEAD
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -201,9 +122,6 @@ def main(args):
     loss_fn = [road_loss, angle_loss, BCELoss(), soft_cldice(iter_=20), soft_dice]
 
     metric_fns = {"acc": accuracy_fn, "patch_acc": patch_accuracy_fn}
-=======
-    metric_fns = {"acc": accuracy_fn, "patch_acc": patch_accuracy_fn, "f1": f1_fn, "patch_f1": patch_F1_fn}
->>>>>>> master
 
     if args.resume:
         model.load_state_dict(torch.load(args.resume, map_location=args.device))
@@ -212,12 +130,8 @@ def main(args):
 
     # Training and validation
     history = {}
-<<<<<<< HEAD
     best_acc = 0
     for epoch in range(args.start_epoch, args.num_epochs):
-=======
-    for epoch in range(start_epoch, start_epoch + args.num_epochs):
->>>>>>> master
         start = timer()
         logging.info(f"--------- Training epoch {args.start_epoch + epoch + 1} / {args.start_epoch + args.num_epochs} ---------")
         metrics = train_one_epoch(
@@ -230,10 +144,6 @@ def main(args):
             epoch=epoch,
             args=args,
         )
-<<<<<<< HEAD
-=======
-
->>>>>>> master
         metrics = evaluate_model(
             val_loader=val_loader,
             model=model,
